@@ -3686,6 +3686,8 @@ static int clone_update_rootfs(struct clone_update_data *data)
 	/* update hostname in rootfs */
 	/* we're going to mount, so run in a clean namespace to simplify cleanup */
 
+	(void)lxc_setgroups(0, NULL);
+
 	if (setgid(0) < 0) {
 		ERROR("Failed to setgid to 0");
 		return -1;
@@ -3695,9 +3697,6 @@ static int clone_update_rootfs(struct clone_update_data *data)
 		ERROR("Failed to setuid to 0");
 		return -1;
 	}
-
-	if (setgroups(0, NULL) < 0)
-		WARN("Failed to clear groups");
 
 	if (unshare(CLONE_NEWNS) < 0)
 		return -1;
