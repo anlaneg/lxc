@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1+
 
 # Make sure the usual locations are in PATH
 export PATH=$PATH:/usr/sbin:/usr/bin:/sbin:/bin
@@ -69,7 +70,7 @@ sed -i \
 -e 's/\([[:blank:]*]\|#*\)\(lxc\.init_uid\)\([[:blank:]*]\|=\)/\1lxc\.init\.uid\3/g' \
 -e 's/\([[:blank:]*]\|#*\)\(lxc\.init_gid\)\([[:blank:]*]\|=\)/\1lxc\.init\.gid\3/g' \
 -e 's/\([[:blank:]*]\|#*\)\(lxc\.limit\)\([[:blank:]*]\|=\)/\1lxc\.prlimit\3/g' \
--e 's/\([[:blank:]*]\|#*\)\(lxc\.network\)\(\.[[:digit:]*]\)\(\.ipv4\)/\1lxc\.net\3\4\.address/g' \
+-e 's/\([[:blank:]*]\|#*\)\(lxc\.network\)\(\.[[:digit:]*]\)\(\.ipv4\)/\1lxc\.net\3\4/g' \
 -e 's/\([[:blank:]*]\|#*\)\(lxc\.network\)\(\.[[:digit:]*]\)/\1lxc\.net\3/g' \
 -e 's/\([[:blank:]*]\|#*\)\(lxc\.network\)\([[:blank:]*]\|=\)/\1lxc\.net\3/g' \
 -e '/\([[:blank:]*]\|#*\)\(lxc\.rootfs\.backend\)\([[:blank:]*]\|=\)/d' \

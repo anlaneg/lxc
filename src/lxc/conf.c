@@ -1,25 +1,4 @@
-/*
- * lxc: linux Container library
- *
- * (C) Copyright IBM Corp. 2007, 2008
- *
- * Authors:
- * Daniel Lezcano <daniel.lezcano at free.fr>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -57,6 +36,7 @@
 #include "af_unix.h"
 #include "caps.h"
 #include "cgroup.h"
+#include "cgroup2_devices.h"
 #include "conf.h"
 #include "config.h"
 #include "confile.h"
@@ -1029,7 +1009,7 @@ int lxc_allocate_ttys(struct lxc_conf *conf)
 			SYSWARN("Failed to set FD_CLOEXEC flag on slave fd %d of "
 			        "tty device \"%s\"", tty->slave, tty->name);
 
-		tty->busy = 0;
+		tty->busy = -1;
 	}
 
 	INFO("Finished creating %zu tty devices", ttys->max);
@@ -1138,18 +1118,21 @@ on_error:
  * error, log it but don't fail yet.
  */
 static int mount_autodev(const char *name, const struct lxc_rootfs *rootfs,
-			 const char *lxcpath)
+			 int autodevtmpfssize, const char *lxcpath)
 {
 	__do_free char *path = NULL;
 	int ret;
 	size_t clen;
 	mode_t cur_mask;
+        char mount_options[128];
 
 	INFO("Preparing \"/dev\"");
 
 	/* $(rootfs->mount) + "/dev/pts" + '\0' */
 	clen = (rootfs->path ? strlen(rootfs->mount) : 0) + 9;
 	path = must_realloc(NULL, clen);
+	sprintf(mount_options, "size=%d,mode=755", (autodevtmpfssize != 0) ? autodevtmpfssize : 500000);
+	DEBUG("Using mount options: %s", mount_options);
 
 	ret = snprintf(path, clen, "%s/dev", rootfs->path ? rootfs->mount : "");
 	if (ret < 0 || (size_t)ret >= clen)
@@ -1163,8 +1146,8 @@ static int mount_autodev(const char *name, const struct lxc_rootfs *rootfs,
 		goto reset_umask;
 	}
 
-	ret = safe_mount("none", path, "tmpfs", 0, "size=500000,mode=755",
-			 rootfs->path ? rootfs->mount : NULL);
+	ret = safe_mount("none", path, "tmpfs", 0, mount_options,
+			 rootfs->path ? rootfs->mount : NULL );
 	if (ret < 0) {
 		SYSERROR("Failed to mount tmpfs on \"%s\"", path);
 		goto reset_umask;
@@ -1873,16 +1856,21 @@ static void parse_mntopt(char *opt, unsigned long *flags, char **data, size_t si
 {
 	struct mount_opt *mo;
 
-	/* If opt is found in mount_opt, set or clear flags.
-	 * Otherwise append it to data. */
+	/* If '=' is contained in opt, the option must go into data. */
+	if (!strchr(opt, '=')) {
 
-	for (mo = &mount_opt[0]; mo->name != NULL; mo++) {
-		if (strncmp(opt, mo->name, strlen(mo->name)) == 0) {
-			if (mo->clear)
-				*flags &= ~mo->flag;
-			else
-				*flags |= mo->flag;
-			return;
+		/* If opt is found in mount_opt, set or clear flags.
+		 * Otherwise append it to data. */
+		size_t opt_len = strlen(opt);
+		for (mo = &mount_opt[0]; mo->name != NULL; mo++) {
+			size_t mo_name_len = strlen(mo->name);
+			if (opt_len == mo_name_len && strncmp(opt, mo->name, mo_name_len) == 0) {
+				if (mo->clear)
+					*flags &= ~mo->flag;
+				else
+					*flags |= mo->flag;
+				return;
+			}
 		}
 	}
 
@@ -2736,6 +2724,7 @@ struct lxc_conf *lxc_conf_init(void)
 	new->logfd = -1;
 	lxc_list_init(&new->cgroup);
 	lxc_list_init(&new->cgroup2);
+	lxc_list_init(&new->devices);
 	lxc_list_init(&new->network);
 	lxc_list_init(&new->mount_list);
 	lxc_list_init(&new->caps);
@@ -2757,6 +2746,8 @@ struct lxc_conf *lxc_conf_init(void)
 	new->lsm_aa_profile = NULL;
 	lxc_list_init(&new->lsm_aa_raw);
 	new->lsm_se_context = NULL;
+	new->lsm_se_keyring_context = NULL;
+	new->keyring_disable_session = false;
 	new->tmp_umount_proc = false;
 	new->tmp_umount_proc = 0;
 	new->shmount.path_host = NULL;
@@ -3548,6 +3539,7 @@ int lxc_setup(struct lxc_handler *handler)
 	int ret;
 	const char *lxcpath = handler->lxcpath, *name = handler->name;
 	struct lxc_conf *lxc_conf = handler->conf;
+	char *keyring_context = NULL;
 
 	ret = lxc_setup_rootfs_prepare_root(lxc_conf, name, lxcpath);
 	if (ret < 0) {
@@ -3563,9 +3555,17 @@ int lxc_setup(struct lxc_handler *handler)
 		}
 	}
 
-	ret = lxc_setup_keyring();
-	if (ret < 0)
-		return -1;
+	if (!lxc_conf->keyring_disable_session) {
+		if (lxc_conf->lsm_se_keyring_context) {
+			keyring_context = lxc_conf->lsm_se_keyring_context;
+		} else if (lxc_conf->lsm_se_context) {
+			keyring_context = lxc_conf->lsm_se_context;
+		}
+
+		ret = lxc_setup_keyring(keyring_context);
+		if (ret < 0)
+			return -1;
+	}
 
 	if (handler->ns_clone_flags & CLONE_NEWNET) {
 		ret = lxc_setup_network_in_child_namespaces(lxc_conf,
@@ -3583,7 +3583,7 @@ int lxc_setup(struct lxc_handler *handler)
 	}
 
 	if (lxc_conf->autodev > 0) {
-		ret = mount_autodev(name, &lxc_conf->rootfs, lxcpath);
+		ret = mount_autodev(name, &lxc_conf->rootfs, lxc_conf->autodevtmpfssize, lxcpath);
 		if (ret < 0) {
 			ERROR("Failed to mount \"/dev\"");
 			return -1;
@@ -3883,6 +3883,17 @@ int lxc_clear_cgroups(struct lxc_conf *c, const char *key, int version)
 	return 0;
 }
 
+static void lxc_clear_devices(struct lxc_conf *conf)
+{
+	struct lxc_list *list = &conf->devices;
+	struct lxc_list *it, *next;
+
+	lxc_list_for_each_safe(it, list, next) {
+		lxc_list_del(it);
+		free(it);
+	}
+}
+
 int lxc_clear_limits(struct lxc_conf *c, const char *key)
 {
 	struct lxc_list *it, *next;
@@ -4097,6 +4108,7 @@ void lxc_conf_free(struct lxc_conf *conf)
 	free(conf->rootfs.bdev_type);
 	free(conf->rootfs.options);
 	free(conf->rootfs.path);
+	free(conf->rootfs.data);
 	free(conf->logfile);
 	if (conf->logfd != -1)
 		close(conf->logfd);
@@ -4119,6 +4131,8 @@ void lxc_conf_free(struct lxc_conf *conf)
 	lxc_clear_config_keepcaps(conf);
 	lxc_clear_cgroups(conf, "lxc.cgroup", CGROUP_SUPER_MAGIC);
 	lxc_clear_cgroups(conf, "lxc.cgroup2", CGROUP2_SUPER_MAGIC);
+	lxc_clear_devices(conf);
+	lxc_clear_cgroup2_devices(conf);
 	lxc_clear_hooks(conf, "lxc.hook");
 	lxc_clear_mount_entries(conf);
 	lxc_clear_idmaps(conf);

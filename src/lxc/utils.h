@@ -1,25 +1,5 @@
-/*
- * lxc: linux Container library
- *
- * (C) Copyright IBM Corp. 2007, 2008
- *
- * Authors:
- * Daniel Lezcano <daniel.lezcano at free.fr>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
+
 #ifndef __LXC_UTILS_H
 #define __LXC_UTILS_H
 
@@ -219,13 +199,6 @@ extern int run_command(char *buf, size_t buf_size, int (*child_fn)(void *),
 extern int run_command_status(char *buf, size_t buf_size, int (*child_fn)(void *),
 		       void *args);
 
-/* Concatenate all passed-in strings into one path. Do not fail. If any piece
- * is not prefixed with '/', add a '/'.
- */
-__attribute__((sentinel)) extern char *must_concat(const char *first, ...);
-__attribute__((sentinel)) extern char *must_make_path(const char *first, ...);
-__attribute__((sentinel)) extern char *must_append_path(char *first, ...);
-
 /* return copy of string @entry;  do not fail. */
 extern char *must_copy_string(const char *entry);
 
@@ -256,9 +229,9 @@ static inline uint64_t lxc_getpagesize(void)
 extern uint64_t lxc_find_next_power2(uint64_t n);
 
 /* Set a signal the child process will receive after the parent has died. */
-extern int lxc_set_death_signal(int signal, pid_t parent);
+extern int lxc_set_death_signal(int signal, pid_t parent, int parent_status_fd);
 extern int fd_cloexec(int fd, bool cloexec);
-extern int recursive_destroy(char *dirname);
-extern int lxc_setup_keyring(void);
+extern int recursive_destroy(const char *dirname);
+extern int lxc_setup_keyring(char *keyring_label);
 
 #endif /* __LXC_UTILS_H */

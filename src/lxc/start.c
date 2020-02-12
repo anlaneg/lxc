@@ -1,27 +1,4 @@
-/*
- * lxc: linux Container library
- *
- * (C) Copyright IBM Corp. 2007, 2008
- *
- * Authors:
- * Daniel Lezcano <daniel.lezcano at free.fr>
- * Serge Hallyn <serge@hallyn.com>
- * Christian Brauner <christian.brauner@ubuntu.com>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -417,8 +394,6 @@ static int signal_handler(int fd, uint32_t events, void *data,
 	if (siginfo.ssi_signo == SIGHUP) {
 		if (hdlr->pidfd >= 0)
 			lxc_raw_pidfd_send_signal(hdlr->pidfd, SIGTERM, NULL, 0);
-		else if (hdlr->proc_pidfd >= 0)
-			lxc_raw_pidfd_send_signal(hdlr->proc_pidfd, SIGTERM, NULL, 0);
 		else
 			kill(hdlr->pid, SIGTERM);
 		INFO("Killing %d since terminal hung up", hdlr->pid);
@@ -429,9 +404,6 @@ static int signal_handler(int fd, uint32_t events, void *data,
 	if (siginfo.ssi_signo != SIGCHLD) {
 		if (hdlr->pidfd >= 0)
 			lxc_raw_pidfd_send_signal(hdlr->pidfd,
-						  siginfo.ssi_signo, NULL, 0);
-		else if (hdlr->proc_pidfd >= 0)
-			lxc_raw_pidfd_send_signal(hdlr->proc_pidfd,
 						  siginfo.ssi_signo, NULL, 0);
 		else
 			kill(hdlr->pid, siginfo.ssi_signo);
@@ -681,8 +653,6 @@ void lxc_zero_handler(struct lxc_handler *handler)
 
 	handler->pidfd = -EBADF;
 
-	handler->proc_pidfd = -EBADF;
-
 	handler->sigfd = -1;
 
 	for (i = 0; i < LXC_NS_MAX; i++)
@@ -706,9 +676,6 @@ void lxc_free_handler(struct lxc_handler *handler)
 	if (handler->pidfd >= 0)
 		close(handler->pidfd);
 
-	if (handler->proc_pidfd >= 0)
-		close(handler->proc_pidfd);
-
 	if (handler->sigfd >= 0)
 		close(handler->sigfd);
 
@@ -717,6 +684,9 @@ void lxc_free_handler(struct lxc_handler *handler)
 	if (handler->conf && handler->conf->reboot == REBOOT_NONE)
 		if (handler->conf->maincmd_fd >= 0)
 			lxc_abstract_unix_close(handler->conf->maincmd_fd);
+
+	if (handler->monitor_status_fd >= 0)
+		close(handler->monitor_status_fd);
 
 	if (handler->state_socket_pair[0] >= 0)
 		close(handler->state_socket_pair[0]);
@@ -752,9 +722,9 @@ struct lxc_handler *lxc_init_handler(const char *name, struct lxc_conf *conf,
 	handler->data_sock[0] = handler->data_sock[1] = -1;
 	handler->conf = conf;
 	handler->lxcpath = lxcpath;
+	handler->monitor_status_fd = -EBADF;
 	handler->pinfd = -1;
 	handler->pidfd = -EBADF;
-	handler->proc_pidfd = -EBADF;
 	handler->sigfd = -EBADF;
 	handler->init_died = false;
 	handler->state_socket_pair[0] = handler->state_socket_pair[1] = -1;
@@ -765,6 +735,10 @@ struct lxc_handler *lxc_init_handler(const char *name, struct lxc_conf *conf,
 		handler->nsfd[i] = -1;
 
 	handler->name = name;
+	if (daemonize)
+		handler->transient_pid = lxc_raw_getpid();
+	else
+		handler->transient_pid = -1;
 
 	if (daemonize && handler->conf->reboot == REBOOT_NONE) {
 		/* Create socketpair() to synchronize on daemonized startup.
@@ -804,11 +778,17 @@ on_error:
 
 int lxc_init(const char *name, struct lxc_handler *handler)
 {
+	__do_close_prot_errno int status_fd = -EBADF;
 	int ret;
 	const char *loglevel;
 	struct lxc_conf *conf = handler->conf;
 
 	handler->monitor_pid = lxc_raw_getpid();
+	status_fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+	if (status_fd < 0) {
+		SYSERROR("Failed to open monitor status fd");
+		goto out_close_maincmd_fd;
+	}
 
 	lsm_init();
 	TRACE("Initialized LSM");
@@ -934,16 +914,13 @@ int lxc_init(const char *name, struct lxc_handler *handler)
 	ret = lsm_process_prepare(conf, handler->lxcpath);
 	if (ret < 0) {
 		ERROR("Failed to initialize LSM");
-		goto out_destroy_cgroups;
+		goto out_delete_terminal;
 	}
 	TRACE("Initialized LSM");
 
 	INFO("Container \"%s\" is initialized", name);
+	handler->monitor_status_fd = move_fd(status_fd);
 	return 0;
-
-out_destroy_cgroups:
-	handler->cgroup_ops->payload_destroy(handler->cgroup_ops, handler);
-	handler->cgroup_ops->monitor_destroy(handler->cgroup_ops, handler);
 
 out_delete_terminal:
 	lxc_terminal_delete(&handler->conf->console);
@@ -1037,8 +1014,10 @@ void lxc_fini(const char *name, struct lxc_handler *handler)
 
 	lsm_process_cleanup(handler->conf, handler->lxcpath);
 
-	cgroup_ops->payload_destroy(cgroup_ops, handler);
-	cgroup_ops->monitor_destroy(cgroup_ops, handler);
+	if (cgroup_ops) {
+		cgroup_ops->payload_destroy(cgroup_ops, handler);
+		cgroup_ops->monitor_destroy(cgroup_ops, handler);
+	}
 
 	if (handler->conf->reboot == REBOOT_NONE) {
 		/* For all new state clients simply close the command socket.
@@ -1121,14 +1100,16 @@ void lxc_abort(const char *name, struct lxc_handler *handler)
 
 	lxc_set_state(name, handler, ABORTING);
 
-	if (handler->pidfd > 0)
+	if (handler->pidfd >= 0) {
 		ret = lxc_raw_pidfd_send_signal(handler->pidfd, SIGKILL, NULL, 0);
-	else if (handler->proc_pidfd > 0)
-		ret = lxc_raw_pidfd_send_signal(handler->proc_pidfd, SIGKILL, NULL, 0);
-	else if (handler->pid > 0)
-		ret = kill(handler->pid, SIGKILL);
-	if (ret < 0)
-		SYSERROR("Failed to send SIGKILL to %d", handler->pid);
+		if (ret)
+			SYSWARN("Failed to send SIGKILL via pidfd %d for process %d",
+				handler->pidfd, handler->pid);
+	}
+
+	if (!ret || errno != ESRCH)
+		if (kill(handler->pid, SIGKILL))
+			SYSWARN("Failed to send SIGKILL to %d", handler->pid);
 
 	do {
 		ret = waitpid(-1, &status, 0);
@@ -1138,8 +1119,9 @@ void lxc_abort(const char *name, struct lxc_handler *handler)
 static int do_start(void *data)
 {
 	struct lxc_handler *handler = data;
-	ATTR_UNUSED __do_close_prot_errno int data_sock0 = handler->data_sock[0],
-					      data_sock1 = handler->data_sock[1];
+	__lxc_unused __do_close_prot_errno int data_sock0 = handler->data_sock[0],
+					   data_sock1 = handler->data_sock[1];
+	__do_close_prot_errno int status_fd = -EBADF;
 	int ret;
 	uid_t new_uid;
 	gid_t new_gid;
@@ -1150,13 +1132,18 @@ static int do_start(void *data)
 
 	lxc_sync_fini_parent(handler);
 
+	if (lxc_abstract_unix_recv_fds(data_sock1, &status_fd, 1, NULL, 0) < 0) {
+		ERROR("Failed to receive status file descriptor to child process");
+		goto out_warn_father;
+	}
+
 	/* This prctl must be before the synchro, so if the parent dies before
 	 * we set the parent death signal, we will detect its death with the
 	 * synchro right after, otherwise we have a window where the parent can
 	 * exit before we set the pdeath signal leading to a unsupervized
 	 * container.
 	 */
-	ret = lxc_set_death_signal(SIGKILL, handler->monitor_pid);
+	ret = lxc_set_death_signal(SIGKILL, handler->monitor_pid, status_fd);
 	if (ret < 0) {
 		SYSERROR("Failed to set PR_SET_PDEATHSIG to SIGKILL");
 		goto out_warn_father;
@@ -1236,7 +1223,7 @@ static int do_start(void *data)
 			goto out_warn_father;
 
 		/* set{g,u}id() clears deathsignal */
-		ret = lxc_set_death_signal(SIGKILL, handler->monitor_pid);
+		ret = lxc_set_death_signal(SIGKILL, handler->monitor_pid, status_fd);
 		if (ret < 0) {
 			SYSERROR("Failed to set PR_SET_PDEATHSIG to SIGKILL");
 			goto out_warn_father;
@@ -1313,7 +1300,7 @@ static int do_start(void *data)
 
 	/* Add the requested environment variables to the current environment to
 	 * allow them to be used by the various hooks, such as the start hook
-	 * above.
+	 * below.
 	 */
 	lxc_list_for_each(iterator, &handler->conf->environment) {
 		ret = putenv((char *)iterator->elem);
@@ -1490,7 +1477,8 @@ static int do_start(void *data)
 	}
 
 	if (handler->conf->monitor_signal_pdeath != SIGKILL) {
-		ret = lxc_set_death_signal(handler->conf->monitor_signal_pdeath, handler->monitor_pid);
+		ret = lxc_set_death_signal(handler->conf->monitor_signal_pdeath,
+					   handler->monitor_pid, status_fd);
 		if (ret < 0) {
 			SYSERROR("Failed to set PR_SET_PDEATHSIG to %d",
 				 handler->conf->monitor_signal_pdeath);
@@ -1540,11 +1528,11 @@ static int lxc_recv_ttys_from_child(struct lxc_handler *handler)
 			break;
 
 		tty = &ttys->tty[i];
-		tty->busy = 0;
+		tty->busy = -1;
 		tty->master = ttyfds[0];
 		tty->slave = ttyfds[1];
 		TRACE("Received pty with master fd %d and slave fd %d from "
-		      "parent", tty->master, tty->slave);
+		      "child", tty->master, tty->slave);
 	}
 
 	if (ret < 0)
@@ -1634,30 +1622,6 @@ static inline int do_share_ns(void *arg)
 		return -1;
 
 	return 0;
-}
-
-static int proc_pidfd_open(pid_t pid)
-{
-	__do_close_prot_errno int proc_pidfd = -EBADF;
-	char path[100];
-
-	snprintf(path, sizeof(path), "/proc/%d", pid);
-	proc_pidfd = open(path, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
-	if (proc_pidfd < 0) {
-		SYSERROR("Failed to open %s", path);
-		return -1;
-	}
-
-	/* Test whether we can send signals. */
-	if (lxc_raw_pidfd_send_signal(proc_pidfd, 0, NULL, 0)) {
-		if (errno != ENOSYS)
-			SYSERROR("Failed to send signal through pidfd");
-		else
-			INFO("Sending signals through pidfds not supported on this kernel");
-		return -1;
-	}
-
-	return move_fd(proc_pidfd);
 }
 
 /* lxc_spawn() performs crucial setup tasks and clone()s the new process which
@@ -1771,12 +1735,6 @@ static int lxc_spawn(struct lxc_handler *handler)
 	}
 	TRACE("Cloned child process %d", handler->pid);
 
-	if (handler->pidfd < 0) {
-		handler->proc_pidfd = proc_pidfd_open(handler->pid);
-		if (handler->proc_pidfd < 0 && (errno != ENOSYS))
-			goto out_delete_net;
-	}
-
 	ret = snprintf(pidstr, 20, "%d", handler->pid);
 	if (ret < 0 || ret >= 20)
 		goto out_delete_net;
@@ -1796,6 +1754,12 @@ static int lxc_spawn(struct lxc_handler *handler)
 	}
 
 	lxc_sync_fini_child(handler);
+
+	if (lxc_abstract_unix_send_fds(handler->data_sock[0], &handler->monitor_status_fd, 1, NULL, 0) < 0) {
+		ERROR("Failed to send status file descriptor to child process");
+		goto out_delete_net;
+	}
+	close_prot_errno_disarm(handler->monitor_status_fd);
 
 	/* Map the container uids. The container became an invalid userid the
 	 * moment it was cloned with CLONE_NEWUSER. This call doesn't change
@@ -1822,13 +1786,24 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (ret < 0)
 		goto out_delete_net;
 
-	if (!cgroup_ops->setup_limits(cgroup_ops, handler->conf, false)) {
+	if (!cgroup_ops->setup_limits_legacy(cgroup_ops, handler->conf, false)) {
 		ERROR("Failed to setup cgroup limits for container \"%s\"", name);
 		goto out_delete_net;
 	}
 
-	if (!cgroup_ops->payload_enter(cgroup_ops, handler->pid))
+	if (!cgroup_ops->payload_enter(cgroup_ops, handler)) {
 		goto out_delete_net;
+	}
+
+	if (!cgroup_ops->payload_delegate_controllers(cgroup_ops)) {
+		ERROR("Failed to delegate controllers to payload cgroup");
+		goto out_delete_net;
+	}
+
+	if (!cgroup_ops->setup_limits(cgroup_ops, handler)) {
+		ERROR("Failed to setup cgroup limits for container \"%s\"", name);
+		goto out_delete_net;
+	}
 
 	if (!cgroup_ops->chown(cgroup_ops, handler->conf))
 		goto out_delete_net;
@@ -1894,11 +1869,17 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (ret < 0)
 		goto out_delete_net;
 
-	if (!cgroup_ops->setup_limits(cgroup_ops, handler->conf, true)) {
+	if (!cgroup_ops->setup_limits_legacy(cgroup_ops, handler->conf, true)) {
 		ERROR("Failed to setup legacy device cgroup controller limits");
 		goto out_delete_net;
 	}
 	TRACE("Set up legacy device cgroup controller limits");
+
+	if (!cgroup_ops->devices_activate(cgroup_ops, handler)) {
+		ERROR("Failed to setup cgroup2 device controller limits");
+		goto out_delete_net;
+	}
+	TRACE("Set up cgroup2 device controller limits");
 
 	if (handler->ns_clone_flags & CLONE_NEWCGROUP) {
 		/* Now we're ready to preserve the cgroup namespace */
@@ -1913,6 +1894,9 @@ static int lxc_spawn(struct lxc_handler *handler)
 			DEBUG("Preserved cgroup namespace via fd %d", ret);
 		}
 	}
+
+	cgroup_ops->payload_finalize(cgroup_ops);
+	TRACE("Finished setting up cgroups");
 
 	/* Run any host-side start hooks */
 	ret = run_lxc_hooks(name, "start-host", conf, NULL);
@@ -2020,8 +2004,14 @@ int __lxc_start(const char *name, struct lxc_handler *handler,
 		goto out_fini_nonet;
 	}
 
-	if (!cgroup_ops->monitor_enter(cgroup_ops, handler->monitor_pid)) {
+	if (!cgroup_ops->monitor_enter(cgroup_ops, handler)) {
 		ERROR("Failed to enter monitor cgroup");
+		ret = -1;
+		goto out_fini_nonet;
+	}
+
+	if (!cgroup_ops->monitor_delegate_controllers(cgroup_ops)) {
+		ERROR("Failed to delegate controllers to monitor cgroup");
 		ret = -1;
 		goto out_fini_nonet;
 	}

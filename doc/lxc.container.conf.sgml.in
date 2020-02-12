@@ -1064,7 +1064,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
         <filename>/dev</filename> to be set up as needed in the container
         rootfs.  If lxc.autodev is set to 1, then after mounting the container's
         rootfs LXC will mount a fresh tmpfs under <filename>/dev</filename>
-        (limited to 500k) and fill in a minimal set of initial devices.
+        (limited to 500K by default, unless defined in lxc.autodev.tmpfs.size)
+        and fill in a minimal set of initial devices.
         This is generally required when starting a container containing
         a "systemd" based "init" but may be optional at other times.  Additional
         devices in the containers /dev directory may be created through the
@@ -1079,6 +1080,19 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
             <para>
               Set this to 0 to stop LXC from mounting and populating a minimal
               <filename>/dev</filename> when starting the container.
+            </para>
+          </listitem>
+        </varlistentry>
+
+        <varlistentry>
+          <term>
+            <option>lxc.autodev.tmpfs.size</option>
+          </term>
+          <listitem>
+            <para>
+              Set this to define the size of the /dev tmpfs.
+              The default value is 500000 (500K). If the parameter is used
+              but without value, the default value is used.
             </para>
           </listitem>
         </varlistentry>
@@ -1158,9 +1172,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
               <option>relative</option> source path is taken to be relative to
               the mounted container root. For instance,
              </para>
-<screen>
-dev/null proc/kcore none bind,relative 0 0
-</screen>
+             <programlisting>
+             dev/null proc/kcore none bind,relative 0 0
+             </programlisting>
              <para>
               Will expand dev/null to ${<option>LXC_ROOTFS_MOUNT</option>}/dev/null,
               and mount it to proc/kcore inside the container.
@@ -1918,6 +1932,44 @@ dev/null proc/kcore none bind,relative 0 0
             <programlisting>lxc.selinux.context = system_u:system_r:lxc_t:s0:c22</programlisting>
           </listitem>
         </varlistentry>
+        <varlistentry>
+          <term>
+            <option>lxc.selinux.context.keyring</option>
+          </term>
+          <listitem>
+            <para>
+              Specify the SELinux context under which the container's keyring
+              should be created. By default this the same as lxc.selinux.context, or
+              the the context lxc is executed under if lxc.selinux.context has not been set.
+            </para>
+            <programlisting>lxc.selinux.context.keyring = system_u:system_r:lxc_t:s0:c22</programlisting>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
+      <title>Kernel Keyring</title>
+      <para>
+        The Linux Keyring facility is primarily a way for various
+        kernel components to retain or cache security data, authentication
+        keys, encryption keys, and other data in the kernel. By default lxc
+        will create a new session keyring for the started application.
+      </para>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.keyring.session</option>
+          </term>
+          <listitem>
+            <para>
+              Disable the creation of new session keyring by lxc. The started
+              application will then inherit the current session keyring.
+              By default, or when passing the value 1, a new keyring will be created.
+            </para>
+            <programlisting>lxc.keyring.session = 0</programlisting>
+          </listitem>
+        </varlistentry>
       </variablelist>
     </refsect2>
 
@@ -2564,7 +2616,8 @@ dev/null proc/kcore none bind,relative 0 0
           <listitem>
             <para>
               An integer used to sort the containers when auto-starting
-              a series of containers at once.
+              a series of containers at once. A lower value means an
+              earlier start.
             </para>
           </listitem>
         </varlistentry>

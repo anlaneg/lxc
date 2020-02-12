@@ -1,22 +1,4 @@
-/* liblxcapi
- *
- * Copyright © 2019 Christian Brauner <christian.brauner@ubuntu.com>.
- * Copyright © 2019 Canonical Ltd.
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
-
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
-
- * You should have received a copy of the GNU Lesser General Public License
- * along with this library; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -31,10 +13,61 @@
 
 #include "config.h"
 #include "file_utils.h"
+#include "log.h"
 #include "macro.h"
 #include "memory_utils.h"
 #include "string_utils.h"
 #include "utils.h"
+
+int lxc_open_dirfd(const char *dir)
+{
+	return open(dir, O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+}
+
+int lxc_readat(int dirfd, const char *filename, void *buf, size_t count)
+{
+	__do_close_prot_errno int fd = -EBADF;
+	ssize_t ret;
+
+	fd = openat(dirfd, filename, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+
+	ret = lxc_read_nointr(fd, buf, count);
+	if (ret < 0 || (size_t)ret != count)
+		return -1;
+
+	return 0;
+}
+
+int lxc_writeat(int dirfd, const char *filename, const void *buf, size_t count)
+{
+	__do_close_prot_errno int fd = -EBADF;
+	ssize_t ret;
+
+	fd = openat(dirfd, filename,
+		    O_WRONLY | O_CLOEXEC | O_NOCTTY | O_NOFOLLOW);
+	if (fd < 0)
+		return -1;
+
+	ret = lxc_write_nointr(fd, buf, count);
+	if (ret < 0 || (size_t)ret != count)
+		return -1;
+
+	return 0;
+}
+
+int lxc_write_openat(const char *dir, const char *filename, const void *buf,
+		     size_t count)
+{
+	__do_close_prot_errno int dirfd = -EBADF;
+
+	dirfd = open(dir, O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NOFOLLOW);
+	if (dirfd < 0)
+		return -1;
+
+	return lxc_writeat(dirfd, filename, buf, count);
+}
 
 //向文件filename中写入buf
 int lxc_write_to_file(const char *filename, const void *buf, size_t count,

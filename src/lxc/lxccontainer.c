@@ -1,22 +1,4 @@
-/* liblxcapi
- *
- * Copyright © 2012 Serge Hallyn <serge.hallyn@ubuntu.com>.
- * Copyright © 2012 Canonical Ltd.
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
-
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
-
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -849,6 +831,15 @@ static bool wait_on_daemonized_start(struct lxc_handler *handler, int pid)
 {
 	int ret, state;
 
+	/* The first child is going to fork() again and then exits. So we reap
+	 * the first child here.
+	 */
+	ret = wait_for_pid(pid);
+	if (ret < 0)
+		DEBUG("Failed waiting on first child %d", pid);
+	else
+		DEBUG("First child %d exited", pid);
+
 	/* Close write end of the socket pair. */
 	close(handler->state_socket_pair[1]);
 	handler->state_socket_pair[1] = -1;
@@ -858,15 +849,6 @@ static bool wait_on_daemonized_start(struct lxc_handler *handler, int pid)
 	/* Close read end of the socket pair. */
 	close(handler->state_socket_pair[0]);
 	handler->state_socket_pair[0] = -1;
-
-	/* The first child is going to fork() again and then exits. So we reap
-	 * the first child here.
-	 */
-	ret = wait_for_pid(pid);
-	if (ret < 0)
-		DEBUG("Failed waiting on first child %d", pid);
-	else
-		DEBUG("First child %d exited", pid);
 
 	if (state < 0) {
 		SYSERROR("Failed to receive the container state");
@@ -961,17 +943,17 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	if (c->daemonize) {
 		bool started;
 		char title[2048];
-		pid_t pid;
+		pid_t pid_first, pid_second;
 
-		pid = fork();
-		if (pid < 0) {
+		pid_first = fork();
+		if (pid_first < 0) {
 			free_init_cmd(init_cmd);
 			lxc_free_handler(handler);
 			return false;
 		}
 
 		/* first parent */
-		if (pid != 0) {
+		if (pid_first != 0) {
 			/* Set to NULL because we don't want father unlink
 			 * the PID file, child will do the free and unlink.
 			 */
@@ -980,7 +962,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 			/* Wait for container to tell us whether it started
 			 * successfully.
 			 */
-			started = wait_on_daemonized_start(handler, pid);
+			started = wait_on_daemonized_start(handler, pid_first);
 
 			free_init_cmd(init_cmd);
 			lxc_free_handler(handler);
@@ -1006,14 +988,14 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		 * POSIX's daemon() function we change to "/" and redirect
 		 * std{in,out,err} to /dev/null.
 		 */
-		pid = fork();
-		if (pid < 0) {
+		pid_second = fork();
+		if (pid_second < 0) {
 			SYSERROR("Failed to fork first child process");
 			_exit(EXIT_FAILURE);
 		}
 
 		/* second parent */
-		if (pid != 0) {
+		if (pid_second != 0) {
 			free_init_cmd(init_cmd);
 			lxc_free_handler(handler);
 			_exit(EXIT_SUCCESS);
@@ -1414,7 +1396,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 				 * rsync the contents into
 				 * <container-path>/<container-name>/rootfs.
 				 * However, the overlay mount function will
-				 * mount will mount
+				 * mount
 				 * <container-path>/<container-name>/delta0
 				 * over
 				 * <container-path>/<container-name>/rootfs
@@ -5292,7 +5274,7 @@ out:
 static int do_lxcapi_seccomp_notify_fd(struct lxc_container *c)
 {
 	if (!c || !c->lxc_conf)
-		return minus_one_set_errno(-EINVAL);
+		return ret_set_errno(-1, -EINVAL);
 
 	return lxc_seccomp_get_notify_fd(&c->lxc_conf->seccomp);
 }

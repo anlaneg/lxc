@@ -1,25 +1,4 @@
-/*
- * lxc: linux Container library
- *
- * (C) Copyright IBM Corp. 2007, 2008
- *
- * Authors:
- * Daniel Lezcano <daniel.lezcano at free.fr>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -48,6 +27,7 @@
 
 #include "config.h"
 #include "log.h"
+#include "lsm/lsm.h"
 #include "lxclock.h"
 #include "memory_utils.h"
 #include "namespace.h"
@@ -344,11 +324,11 @@ static int do_sha1_hash(const char *buf, int buflen, unsigned char *md_value, un
 		return -1;
 	}
 
-	mdctx = EVP_MD_CTX_new();
+	mdctx = EVP_MD_CTX_create();
 	EVP_DigestInit_ex(mdctx, md, NULL);
 	EVP_DigestUpdate(mdctx, buf, buflen);
 	EVP_DigestFinal_ex(mdctx, md_value, md_len);
-	EVP_MD_CTX_free(mdctx);
+	EVP_MD_CTX_destroy(mdctx);
 
 	return 0;
 }
@@ -1562,6 +1542,8 @@ int lxc_prepare_loop_dev(const char *source, char *loop_dev, int flags)
 	memset(&lo64, 0, sizeof(lo64));
 	lo64.lo_flags = flags;
 
+	strlcpy((char *)lo64.lo_file_name, source, LO_NAME_SIZE);
+
 	ret = ioctl(fd_loop, LOOP_SET_STATUS64, &lo64);
 	if (ret < 0) {
 		SYSERROR("Failed to set loop status64");
@@ -1731,7 +1713,43 @@ uint64_t lxc_find_next_power2(uint64_t n)
 	return n;
 }
 
-int lxc_set_death_signal(int signal, pid_t parent)
+static int process_dead(/* takes */ int status_fd)
+{
+	__do_close_prot_errno int dupfd = -EBADF;
+	__do_free char *line = NULL;
+	__do_fclose FILE *f = NULL;
+	int ret = 0;
+	size_t n = 0;
+
+	dupfd = dup(status_fd);
+	if (dupfd < 0)
+		return -1;
+
+	if (fd_cloexec(dupfd, true) < 0)
+		return -1;
+
+	/* transfer ownership of fd */
+	f = fdopen(move_fd(dupfd), "re");
+	if (!f)
+		return -1;
+
+	ret = 0;
+	while (getline(&line, &n, f) != -1) {
+		char *state;
+
+		if (strncmp(line, "State:", 6))
+			continue;
+
+		state = lxc_trim_whitespace_in_place(line + 6);
+		/* only check whether process is dead or zombie for now */
+		if (*state == 'X' || *state == 'Z')
+			ret = 1;
+	}
+
+	return ret;
+}
+
+int lxc_set_death_signal(int signal, pid_t parent, int parent_status_fd)
 {
 	int ret;
 	pid_t ppid;
@@ -1739,12 +1757,16 @@ int lxc_set_death_signal(int signal, pid_t parent)
 	ret = prctl(PR_SET_PDEATHSIG, prctl_arg(signal), prctl_arg(0),
 		    prctl_arg(0), prctl_arg(0));
 
-	/* If not in a PID namespace, check whether we have been orphaned. */
+	/* verify that we haven't been orphaned in the meantime */
 	ppid = (pid_t)syscall(SYS_getppid);
-	if (ppid && ppid != parent) {
-		ret = raise(SIGKILL);
-		if (ret < 0)
-			return -1;
+	if (ppid == 0) { /* parent outside our pidns */
+		if (parent_status_fd < 0)
+			return 0;
+
+		if (process_dead(parent_status_fd) == 1)
+			return raise(SIGKILL);
+	} else if (ppid != parent) {
+		return raise(SIGKILL);
 	}
 
 	if (ret < 0)
@@ -1775,21 +1797,19 @@ int fd_cloexec(int fd, bool cloexec)
 	return 0;
 }
 
-int recursive_destroy(char *dirname)
+int recursive_destroy(const char *dirname)
 {
+	__do_closedir DIR *dir = NULL;
+	int fret = 0;
 	int ret;
 	struct dirent *direntp;
-	DIR *dir;
-	int r = 0;
 
 	dir = opendir(dirname);
-	if (!dir) {
-		SYSERROR("Failed to open dir \"%s\"", dirname);
-		return -1;
-	}
+	if (!dir)
+		return log_error_errno(-1, errno, "Failed to open dir \"%s\"", dirname);
 
 	while ((direntp = readdir(dir))) {
-		char *pathname;
+		__do_free char *pathname = NULL;
 		struct stat mystat;
 
 		if (!strcmp(direntp->d_name, ".") ||
@@ -1797,50 +1817,40 @@ int recursive_destroy(char *dirname)
 			continue;
 
 		pathname = must_make_path(dirname, direntp->d_name, NULL);
-
 		ret = lstat(pathname, &mystat);
 		if (ret < 0) {
-			if (!r)
+			if (!fret)
 				SYSWARN("Failed to stat \"%s\"", pathname);
 
-			r = -1;
-			goto next;
+			fret = -1;
+			continue;
 		}
 
 		if (!S_ISDIR(mystat.st_mode))
-			goto next;
+			continue;
 
 		ret = recursive_destroy(pathname);
 		if (ret < 0)
-			r = -1;
-
-	next:
-		free(pathname);
+			fret = -1;
 	}
 
 	ret = rmdir(dirname);
-	if (ret < 0) {
-		if (!r)
-			SYSWARN("Failed to delete \"%s\"", dirname);
+	if (ret < 0)
+		return log_warn_errno(-1, errno, "Failed to delete \"%s\"", dirname);
 
-		r = -1;
-	}
-
-	ret = closedir(dir);
-	if (ret < 0) {
-		if (!r)
-			SYSWARN("Failed to delete \"%s\"", dirname);
-
-		r = -1;
-	}
-
-	return r;
+	return fret;
 }
 
-int lxc_setup_keyring(void)
+int lxc_setup_keyring(char *keyring_label)
 {
 	key_serial_t keyring;
 	int ret = 0;
+
+	if (keyring_label) {
+		if (lsm_keyring_label_set(keyring_label) < 0) {
+			ERROR("Couldn't set keyring label");
+		}
+	}
 
 	/* Try to allocate a new session keyring for the container to prevent
 	 * information leaks.

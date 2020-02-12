@@ -1,26 +1,4 @@
-/*
- * lxc: linux Container library
- * (C) Copyright IBM Corp. 2007, 2008
- *
- * Authors:
- * Daniel Lezcano <daniel.lezcano at free.fr>
- * Serge Hallyn <serge@hallyn.com>
- * Christian Brauner <christian.brauner@ubuntu.com>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -83,6 +61,7 @@ lxc_log_define(confile, lxc);
 					   void *);
 
 lxc_config_define(autodev);
+lxc_config_define(autodev_tmpfs_size);
 lxc_config_define(apparmor_allow_incomplete);
 lxc_config_define(apparmor_allow_nesting);
 lxc_config_define(apparmor_profile);
@@ -110,6 +89,7 @@ lxc_config_define(init_cmd);
 lxc_config_define(init_cwd);
 lxc_config_define(init_gid);
 lxc_config_define(init_uid);
+lxc_config_define(keyring_session);
 lxc_config_define(log_file);
 lxc_config_define(log_level);
 lxc_config_define(log_syslog);
@@ -157,6 +137,7 @@ lxc_config_define(seccomp_allow_nesting);
 lxc_config_define(seccomp_notify_cookie);
 lxc_config_define(seccomp_notify_proxy);
 lxc_config_define(selinux_context);
+lxc_config_define(selinux_context_keyring);
 lxc_config_define(signal_halt);
 lxc_config_define(signal_reboot);
 lxc_config_define(signal_stop);
@@ -167,6 +148,17 @@ lxc_config_define(uts_name);
 lxc_config_define(sysctl);
 lxc_config_define(proc);
 
+/*
+ * Important Note:
+ * If a new config option is added to this table, be aware that 
+ * the order in which the options are places into the table matters.
+ * That means that more specific options of a namespace have to be
+ * placed above more generic ones.
+ *
+ * For instance: If lxc.ab is placed before lxc.ab.c, the config option
+ * lxc.ab.c will always be matched to lxc.ab. That is, the lxc.ab.c option
+ * has to be placed above lxc.ab.
+ */
 //记录有效的配置项
 static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.arch",                      set_config_personality,                 get_config_personality,                 clr_config_personality,               },
@@ -174,6 +166,7 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.apparmor.allow_incomplete", set_config_apparmor_allow_incomplete,   get_config_apparmor_allow_incomplete,   clr_config_apparmor_allow_incomplete, },
 	{ "lxc.apparmor.allow_nesting",    set_config_apparmor_allow_nesting,      get_config_apparmor_allow_nesting,      clr_config_apparmor_allow_nesting,    },
 	{ "lxc.apparmor.raw",              set_config_apparmor_raw,                get_config_apparmor_raw,                clr_config_apparmor_raw,              },
+	{ "lxc.autodev.tmpfs.size",        set_config_autodev_tmpfs_size,          get_config_autodev_tmpfs_size,          clr_config_autodev_tmpfs_size,        },
 	{ "lxc.autodev",                   set_config_autodev,                     get_config_autodev,                     clr_config_autodev,                   },
 	{ "lxc.cap.drop",                  set_config_cap_drop,                    get_config_cap_drop,                    clr_config_cap_drop,                  },
 	{ "lxc.cap.keep",                  set_config_cap_keep,                    get_config_cap_keep,                    clr_config_cap_keep,                  },
@@ -208,6 +201,7 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.init.gid",                  set_config_init_gid,                    get_config_init_gid,                    clr_config_init_gid,                  },
 	{ "lxc.init.uid",                  set_config_init_uid,                    get_config_init_uid,                    clr_config_init_uid,                  },
 	{ "lxc.init.cwd",                  set_config_init_cwd,                    get_config_init_cwd,                    clr_config_init_cwd,                  },
+	{ "lxc.keyring.session",           set_config_keyring_session,             get_config_keyring_session,             clr_config_keyring_session            },
 	{ "lxc.log.file",                  set_config_log_file,                    get_config_log_file,                    clr_config_log_file,                  },
 	{ "lxc.log.level",                 set_config_log_level,                   get_config_log_level,                   clr_config_log_level,                 },
 	{ "lxc.log.syslog",                set_config_log_syslog,                  get_config_log_syslog,                  clr_config_log_syslog,                },
@@ -253,6 +247,7 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.seccomp.notify.cookie",     set_config_seccomp_notify_cookie,       get_config_seccomp_notify_cookie,       clr_config_seccomp_notify_cookie,     },
 	{ "lxc.seccomp.notify.proxy",      set_config_seccomp_notify_proxy,        get_config_seccomp_notify_proxy,        clr_config_seccomp_notify_proxy,      },
 	{ "lxc.seccomp.profile",           set_config_seccomp_profile,             get_config_seccomp_profile,             clr_config_seccomp_profile,           },
+	{ "lxc.selinux.context.keyring",   set_config_selinux_context_keyring,     get_config_selinux_context_keyring,     clr_config_selinux_context_keyring    },
 	{ "lxc.selinux.context",           set_config_selinux_context,             get_config_selinux_context,             clr_config_selinux_context,           },
 	{ "lxc.signal.halt",               set_config_signal_halt,                 get_config_signal_halt,                 clr_config_signal_halt,               },
 	{ "lxc.signal.reboot",             set_config_signal_reboot,               get_config_signal_reboot,               clr_config_signal_reboot,             },
@@ -425,11 +420,11 @@ static int set_config_net_l2proxy(const char *key, const char *value,
 		return clr_config_net_l2proxy(key, lxc_conf, data);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	ret = lxc_safe_uint(value, &val);
 	if (ret < 0)
-		return minus_one_set_errno(-ret);
+		return ret_set_errno(-1, -ret);
 
 	switch (val) {
 	case 0:
@@ -440,7 +435,7 @@ static int set_config_net_l2proxy(const char *key, const char *value,
 		return 0;
 	}
 
-	return minus_one_set_errno(EINVAL);
+	return ret_set_errno(-1, EINVAL);
 }
 
 static int set_config_net_name(const char *key, const char *value,
@@ -509,11 +504,11 @@ static int set_config_net_ipvlan_mode(const char *key, const char *value,
 		return clr_config_net_ipvlan_mode(key, lxc_conf, data);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_IPVLAN) {
 		SYSERROR("Invalid ipvlan mode \"%s\", can only be used with ipvlan network", value);
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 	}
 
 	return lxc_ipvlan_mode_to_flag(&netdev->priv.ipvlan_attr.mode, value);
@@ -528,11 +523,11 @@ static int set_config_net_ipvlan_isolation(const char *key, const char *value,
 		return clr_config_net_ipvlan_isolation(key, lxc_conf, data);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_IPVLAN) {
 		SYSERROR("Invalid ipvlan isolation \"%s\", can only be used with ipvlan network", value);
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 	}
 
 	return lxc_ipvlan_isolation_to_flag(&netdev->priv.ipvlan_attr.isolation, value);
@@ -760,11 +755,11 @@ static int set_config_net_veth_ipv4_route(const char *key, const char *value,
 		return clr_config_net_veth_ipv4_route(key, lxc_conf, data);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_VETH) {
 		SYSERROR("Invalid ipv4 route \"%s\", can only be used with veth network", value);
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 	}
 
 	inetdev = malloc(sizeof(*inetdev));
@@ -785,22 +780,22 @@ static int set_config_net_veth_ipv4_route(const char *key, const char *value,
 
 	slash = strchr(valdup, '/');
 	if (!slash)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	*slash = '\0';
 	slash++;
 	if (*slash == '\0')
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	netmask = slash;
 
 	ret = lxc_safe_uint(netmask, &inetdev->prefix);
 	if (ret < 0 || inetdev->prefix > 32)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	ret = inet_pton(AF_INET, valdup, &inetdev->addr);
 	if (!ret || ret < 0)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	lxc_list_add_tail(&netdev->priv.veth_attr.ipv4_routes, list);
 	move_ptr(inetdev);
@@ -931,11 +926,11 @@ static int set_config_net_veth_ipv6_route(const char *key, const char *value,
 		return clr_config_net_veth_ipv6_route(key, lxc_conf, data);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_VETH) {
 		SYSERROR("Invalid ipv6 route \"%s\", can only be used with veth network", value);
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 	}
 
 	inet6dev = malloc(sizeof(*inet6dev));
@@ -956,22 +951,22 @@ static int set_config_net_veth_ipv6_route(const char *key, const char *value,
 
 	slash = strchr(valdup, '/');
 	if (!slash)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	*slash = '\0';
 	slash++;
 	if (*slash == '\0')
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	netmask = slash;
 
 	ret = lxc_safe_uint(netmask, &inet6dev->prefix);
 	if (ret < 0 || inet6dev->prefix > 128)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	ret = inet_pton(AF_INET6, valdup, &inet6dev->addr);
 	if (!ret || ret < 0)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	lxc_list_add_tail(&netdev->priv.veth_attr.ipv6_routes, list);
 	move_ptr(inet6dev);
@@ -1037,7 +1032,7 @@ static int set_config_seccomp_allow_nesting(const char *key, const char *value,
 		return -1;
 
 	if (lxc_conf->seccomp.allow_nesting > 1)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	return 0;
 #else
@@ -1052,7 +1047,7 @@ static int set_config_seccomp_notify_cookie(const char *key, const char *value,
 #ifdef HAVE_SECCOMP_NOTIFY
 	return set_config_string_item(&lxc_conf->seccomp.notifier.cookie, value);
 #else
-	return minus_one_set_errno(ENOSYS);
+	return ret_set_errno(-1, ENOSYS);
 #endif
 }
 
@@ -1066,7 +1061,7 @@ static int set_config_seccomp_notify_proxy(const char *key, const char *value,
 		return clr_config_seccomp_notify_proxy(key, lxc_conf, NULL);
 
 	if (strncmp(value, "unix:", 5) != 0)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	offset = value + 5;
 	if (lxc_unix_sockaddr(&lxc_conf->seccomp.notifier.proxy_addr, offset) < 0)
@@ -1074,7 +1069,7 @@ static int set_config_seccomp_notify_proxy(const char *key, const char *value,
 
 	return 0;
 #else
-	return minus_one_set_errno(ENOSYS);
+	return ret_set_errno(-1, ENOSYS);
 #endif
 }
 
@@ -1504,6 +1499,18 @@ static int set_config_selinux_context(const char *key, const char *value,
 	return set_config_string_item(&lxc_conf->lsm_se_context, value);
 }
 
+static int set_config_selinux_context_keyring(const char *key, const char *value,
+					      struct lxc_conf *lxc_conf, void *data)
+{
+	return set_config_string_item(&lxc_conf->lsm_se_keyring_context, value);
+}
+
+static int set_config_keyring_session(const char *key, const char *value,
+				      struct lxc_conf *lxc_conf, void *data)
+{
+	return set_config_bool_item(&lxc_conf->keyring_disable_session, value, false);
+}
+
 static int set_config_log_file(const char *key, const char *value,
 			      struct lxc_conf *c, void *data)
 {
@@ -1563,6 +1570,20 @@ static int set_config_autodev(const char *key, const char *value,
 
 	if (lxc_conf->autodev > 1)
 		return -1;
+
+	return 0;
+}
+
+static int set_config_autodev_tmpfs_size(const char *key, const char *value,
+			      struct lxc_conf *lxc_conf, void *data)
+{
+	if (lxc_config_value_empty(value)) {
+		lxc_conf->autodevtmpfssize = 500000;
+		return 0;
+	}
+
+	if (lxc_safe_int(value, &lxc_conf->autodevtmpfssize) < 0)
+		lxc_conf->autodevtmpfssize = 500000;
 
 	return 0;
 }
@@ -2562,26 +2583,7 @@ static int set_config_rootfs_path(const char *key, const char *value,
 static int set_config_rootfs_managed(const char *key, const char *value,
 				     struct lxc_conf *lxc_conf, void *data)
 {
-	unsigned int val = 0;
-
-	if (lxc_config_value_empty(value)) {
-		lxc_conf->rootfs.managed = true;
-		return 0;
-	}
-
-	if (lxc_safe_uint(value, &val) < 0)
-		return -EINVAL;
-
-	switch (val) {
-	case 0:
-		lxc_conf->rootfs.managed = false;
-		return 0;
-	case 1:
-		lxc_conf->rootfs.managed = true;
-		return 0;
-	}
-
-	return -EINVAL;
+	return set_config_bool_item(&lxc_conf->rootfs.managed, value, true);
 }
 
 static int set_config_rootfs_mount(const char *key, const char *value,
@@ -3570,6 +3572,19 @@ static int get_config_selinux_context(const char *key, char *retv, int inlen,
 	return lxc_get_conf_str(retv, inlen, c->lsm_se_context);
 }
 
+static int get_config_selinux_context_keyring(const char *key, char *retv, int inlen,
+					      struct lxc_conf *c, void *data)
+{
+	return lxc_get_conf_str(retv, inlen, c->lsm_se_keyring_context);
+}
+
+static int get_config_keyring_session(const char *key, char *retv, int inlen,
+				      struct lxc_conf *c, void *data)
+{
+	return lxc_get_conf_bool(c, retv, inlen, c->keyring_disable_session);
+}
+
+
 /* If you ask for a specific cgroup value, i.e. lxc.cgroup.devices.list, then
  * just the value(s) will be printed. Since there still could be more than one,
  * it is newline-separated.
@@ -4017,7 +4032,7 @@ static int get_config_seccomp_notify_cookie(const char *key, char *retv, int inl
 #ifdef HAVE_SECCOMP_NOTIFY
 	return lxc_get_conf_str(retv, inlen, c->seccomp.notifier.cookie);
 #else
-	return minus_one_set_errno(ENOSYS);
+	return ret_set_errno(-1, ENOSYS);
 #endif
 }
 
@@ -4030,7 +4045,7 @@ static int get_config_seccomp_notify_proxy(const char *key, char *retv, int inle
 				    ? &c->seccomp.notifier.proxy_addr.sun_path[0]
 				    : &c->seccomp.notifier.proxy_addr.sun_path[1]);
 #else
-	return minus_one_set_errno(ENOSYS);
+	return ret_set_errno(-1, ENOSYS);
 #endif
 }
 
@@ -4044,6 +4059,12 @@ static int get_config_autodev(const char *key, char *retv, int inlen,
 			      struct lxc_conf *c, void *data)
 {
 	return lxc_get_conf_int(c, retv, inlen, c->autodev);
+}
+
+static int get_config_autodev_tmpfs_size(const char *key, char *retv, int inlen,
+			      struct lxc_conf *c, void *data)
+{
+	return lxc_get_conf_int(c, retv, inlen, c->autodevtmpfssize);
 }
 
 static int get_config_signal_halt(const char *key, char *retv, int inlen,
@@ -4431,6 +4452,21 @@ static inline int clr_config_selinux_context(const char *key,
 	return 0;
 }
 
+static inline int clr_config_selinux_context_keyring(const char *key,
+						     struct lxc_conf *c, void *data)
+{
+	free(c->lsm_se_keyring_context);
+	c->lsm_se_keyring_context = NULL;
+	return 0;
+}
+
+static inline int clr_config_keyring_session(const char *key,
+					     struct lxc_conf *c, void *data)
+{
+	c->keyring_disable_session = false;
+	return 0;
+}
+
 static inline int clr_config_cgroup_controller(const char *key,
 					       struct lxc_conf *c, void *data)
 {
@@ -4638,7 +4674,7 @@ static inline int clr_config_seccomp_notify_cookie(const char *key,
 	c->seccomp.notifier.cookie = NULL;
 	return 0;
 #else
-	return minus_one_set_errno(ENOSYS);
+	return ret_set_errno(-1, ENOSYS);
 #endif
 }
 
@@ -4650,7 +4686,7 @@ static inline int clr_config_seccomp_notify_proxy(const char *key,
 	       sizeof(c->seccomp.notifier.proxy_addr));
 	return 0;
 #else
-	return minus_one_set_errno(ENOSYS);
+	return ret_set_errno(-1, ENOSYS);
 #endif
 }
 
@@ -4666,6 +4702,13 @@ static inline int clr_config_autodev(const char *key, struct lxc_conf *c,
 				     void *data)
 {
 	c->autodev = 1;
+	return 0;
+}
+
+static inline int clr_config_autodev_tmpfs_size(const char *key, struct lxc_conf *c,
+				     void *data)
+{
+	c->autodevtmpfssize = 500000;
 	return 0;
 }
 
@@ -4924,7 +4967,7 @@ static struct lxc_config_t *get_network_config_ops(const char *key,
 		}
 
 		memmove(copy + 8, idx_end + 1, strlen(idx_end + 1));
-		copy[strlen(key) - numstrlen + 1] = '\0';
+		copy[strlen(key) - (numstrlen + 1)] = '\0';
 
 		config = lxc_get_config(copy);
 		if (!config) {
@@ -5084,7 +5127,7 @@ static int clr_config_net_l2proxy(const char *key, struct lxc_conf *lxc_conf,
 	struct lxc_netdev *netdev = data;
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	netdev->l2proxy = false;
 
@@ -5113,7 +5156,7 @@ static int clr_config_net_ipvlan_mode(const char *key,
 	struct lxc_netdev *netdev = data;
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_IPVLAN)
 		return 0;
@@ -5129,7 +5172,7 @@ static int clr_config_net_ipvlan_isolation(const char *key,
 	struct lxc_netdev *netdev = data;
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_IPVLAN)
 		return 0;
@@ -5145,7 +5188,7 @@ static int clr_config_net_veth_mode(const char *key,
 	struct lxc_netdev *netdev = data;
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_VETH)
 		return 0;
@@ -5514,7 +5557,7 @@ static int get_config_net_ipvlan_mode(const char *key, char *retv, int inlen,
 		memset(retv, 0, inlen);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_IPVLAN)
 		return 0;
@@ -5553,7 +5596,7 @@ static int get_config_net_ipvlan_isolation(const char *key, char *retv, int inle
 		memset(retv, 0, inlen);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_IPVLAN)
 		return 0;
@@ -5592,7 +5635,7 @@ static int get_config_net_veth_mode(const char *key, char *retv, int inlen,
 		memset(retv, 0, inlen);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_VETH)
 		return 0;
@@ -5822,7 +5865,7 @@ static int get_config_net_veth_ipv4_route(const char *key, char *retv, int inlen
 		memset(retv, 0, inlen);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_VETH)
 		return 0;
@@ -5913,7 +5956,7 @@ static int get_config_net_veth_ipv6_route(const char *key, char *retv, int inlen
 		memset(retv, 0, inlen);
 
 	if (!netdev)
-		return minus_one_set_errno(EINVAL);
+		return ret_set_errno(-1, EINVAL);
 
 	if (netdev->type != LXC_NET_VETH)
 		return 0;
@@ -5973,6 +6016,7 @@ int lxc_list_subkeys(struct lxc_conf *conf, const char *key, char *retv,
 		strprint(retv, inlen, "dir\n");
 	} else if (!strcmp(key, "lxc.selinux")) {
 		strprint(retv, inlen, "context\n");
+		strprint(retv, inlen, "context.keyring\n");
 	} else if (!strcmp(key, "lxc.mount")) {
 		strprint(retv, inlen, "auto\n");
 		strprint(retv, inlen, "entry\n");
@@ -5985,6 +6029,7 @@ int lxc_list_subkeys(struct lxc_conf *conf, const char *key, char *retv,
 		strprint(retv, inlen, "name\n");
 	} else if (!strcmp(key, "lxc.hook")) {
 		strprint(retv, inlen, "autodev\n");
+		strprint(retv, inlen, "autodevtmpfssize\n");
 		strprint(retv, inlen, "clone\n");
 		strprint(retv, inlen, "destroy\n");
 		strprint(retv, inlen, "mount\n");
@@ -6012,6 +6057,8 @@ int lxc_list_subkeys(struct lxc_conf *conf, const char *key, char *retv,
 		strprint(retv, inlen, "order\n");
 	} else if (!strcmp(key, "lxc.monitor")) {
 		strprint(retv, inlen, "unshare\n");
+	} else if (!strcmp(key, "lxc.keyring")) {
+		strprint(retv, inlen, "session\n");
 	} else {
 		fulllen = -1;
 	}
