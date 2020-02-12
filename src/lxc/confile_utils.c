@@ -176,6 +176,7 @@ on_error:
 	return ret;
 }
 
+//配置值是否为空
 bool lxc_config_value_empty(const char *value)
 {
 	if (value && strlen(value) > 0)

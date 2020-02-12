@@ -74,6 +74,7 @@ static inline long __keyctl(int cmd, unsigned long arg2, unsigned long arg3,
 #endif
 
 #ifndef HAVE_MEMFD_CREATE
+//调用memfd_create系统回调
 static inline int memfd_create(const char *name, unsigned int flags) {
 	#ifndef __NR_memfd_create
 		#if defined __i386__
@@ -162,6 +163,7 @@ static inline int sethostname(const char *name, size_t len)
 
 /* Define setns() if missing from the C library */
 #ifndef HAVE_SETNS
+//设置thread的namespace
 static inline int setns(int fd, int nstype)
 {
 #ifdef __NR_setns

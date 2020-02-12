@@ -126,6 +126,7 @@ static void print_top_failing_dir(const char *path)
 	}
 }
 
+//关闭已打开的namespace fd
 static void lxc_put_nsfds(struct lxc_handler *handler)
 {
 	int i;
@@ -139,6 +140,7 @@ static void lxc_put_nsfds(struct lxc_handler *handler)
 	}
 }
 
+//打开指定进程的某一类型namespace,返回其对应的fd
 static int lxc_try_preserve_ns(const int pid, const char *ns)
 {
 	int fd;
@@ -161,22 +163,27 @@ static int lxc_try_preserve_ns(const int pid, const char *ns)
  * specified in ns_clone_flags.
  * Return true on success, false on failure.
  */
+//为handler打开pid进程对应的ns_clone_flags指定的namespace fd
 static bool lxc_try_preserve_namespaces(struct lxc_handler *handler,
 					int ns_clone_flags, pid_t pid)
 {
 	int i;
 
+	//选将各nsfd置为空
 	for (i = 0; i < LXC_NS_MAX; i++)
 		handler->nsfd[i] = -EBADF;
 
 	for (i = 0; i < LXC_NS_MAX; i++) {
 		int fd;
 
+		//跳过不需要设置的namespace
 		if ((ns_clone_flags & ns_info[i].clone_flag) == 0)
 			continue;
 
+		//获得此namespace对应的fd
 		fd = lxc_try_preserve_ns(pid, ns_info[i].proc_name);
 		if (fd < 0) {
+		    //获取失败，返回false
 			/* Do not fail to start container on kernels that do
 			 * not support interacting with namespaces through
 			 * /proc.
@@ -184,10 +191,12 @@ static bool lxc_try_preserve_namespaces(struct lxc_handler *handler,
 			if (fd == -EOPNOTSUPP)
 				continue;
 
+			//关闭已打开的namespace fd
 			lxc_put_nsfds(handler);
 			return false;
 		}
 
+		//设置i类型namespace对应的fd
 		handler->nsfd[i] = fd;
 		DEBUG("Preserved %s namespace via fd %d", ns_info[i].proc_name,
 		      handler->nsfd[i]);
@@ -1780,6 +1789,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		if (handler->ns_on_clone_flags & ns_info[i].clone_flag)
 			INFO("Cloned %s", ns_info[i].flag_name);
 
+	//为handler打开需要新建的ns
 	if (!lxc_try_preserve_namespaces(handler, handler->ns_on_clone_flags, handler->pid)) {
 		ERROR("Failed to preserve cloned namespaces for lxc.hook.stop");
 		goto out_delete_net;
@@ -1843,6 +1853,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		TRACE("Allocated new network namespace id");
 
 	/* Create the network configuration. */
+	//需要创建net namespace,创建相应
 	if (handler->ns_clone_flags & CLONE_NEWNET) {
 		ret = lxc_create_network(handler);
 		if (ret < 0) {
@@ -1850,6 +1861,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 			goto out_delete_net;
 		}
 
+		//发送创建到的接口名称到子进程
 		ret = lxc_network_send_to_child(handler);
 		if (ret < 0) {
 			ERROR("Failed to send veth names to child");

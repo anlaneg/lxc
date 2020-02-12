@@ -94,6 +94,7 @@ const char *lxc_global_config_value(const char *option_name)
 	char *user_cgroup_pattern = NULL;
 
 	if (geteuid() > 0) {
+	    //取home路径
 		const char *user_home = getenv("HOME");
 		if (!user_home)
 			user_home = "/";
@@ -123,6 +124,7 @@ const char *lxc_global_config_value(const char *option_name)
 			break;
 	}
 	if (!(*ptr)[0]) {
+	    /*未在options中找到，不存在option_name返回NULL*/
 		free(user_config_path);
 		free(user_default_config_path);
 		free(user_lxc_path);
@@ -132,6 +134,7 @@ const char *lxc_global_config_value(const char *option_name)
 	}
 
 	if (values[i]) {
+	    /*如果之前有缓存，则直接返回*/
 		free(user_config_path);
 		free(user_default_config_path);
 		free(user_lxc_path);
@@ -148,8 +151,10 @@ const char *lxc_global_config_value(const char *option_name)
 
 		while (getline(&line, &len, fin) > 0) {
 			if (*line == '#')
+			    //跳过注释行
 				continue;
 
+			//跳过不是option_name开头的字符串
 			slider1 = strstr(line, option_name);
 			if (!slider1)
 				continue;
@@ -159,11 +164,13 @@ const char *lxc_global_config_value(const char *option_name)
 			 */
 			for (slider2 = line; slider2 < slider1; slider2++)
 				if (*slider2 != ' ' && *slider2 != '\t')
-					break;
+					break;//使slider2指向左侧非空格的第一个字符
 
+			//找到了option_name的子串，忽略
 			if (slider2 < slider1)
 				continue;
 
+			//没有发现'='符，忽略
 			slider1 = strchr(slider1, '=');
 			if (!slider1)
 				continue;
@@ -173,19 +180,24 @@ const char *lxc_global_config_value(const char *option_name)
 			 */
 			for (slider2 += strlen(option_name); slider2 < slider1;
 			     slider2++)
+			    //确定key的右侧位置，跳过空字符
 				if (*slider2 != ' ' && *slider2 != '\t')
 					break;
 
+			//不能到达'='号，忽略（key不匹配）
 			if (slider2 < slider1)
 				continue;
 
+			//跳过'='符，跳过所有空字符
 			slider1++;
 			while (*slider1 && (*slider1 == ' ' || *slider1 == '\t'))
 				slider1++;
 
+			//value为空，忽略
 			if (!*slider1)
 				continue;
 
+			//如果选项名为'lxc.lxcpath',需要移除’/‘，’\n'字符
 			if (strcmp(option_name, "lxc.lxcpath") == 0) {
 				free(user_lxc_path);
 				user_lxc_path = copy_global_config_value(slider1);
@@ -195,12 +207,14 @@ const char *lxc_global_config_value(const char *option_name)
 				goto out;
 			}
 
+			//使用配置中的value
 			values[i] = copy_global_config_value(slider1);
 			goto out;
 		}
 	}
 
 	/* could not find value, use default */
+	//没有找到此值，使用user_lxc_path的默认值
 	if (strcmp(option_name, "lxc.lxcpath") == 0) {
 		remove_trailing_slashes(user_lxc_path);
 		values[i] = user_lxc_path;

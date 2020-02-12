@@ -73,13 +73,13 @@ struct lxc_container {
 	 * \private
 	 * Name of container.
 	 */
-	char *name;
+	char *name;//容器名称
 
 	/*!
 	 * \private
 	 * Full path to configuration file.
 	 */
-	char *configfile;
+	char *configfile;//配置文件路径
 
 	/*!
 	 * \private
@@ -104,7 +104,7 @@ struct lxc_container {
 	 * Number of references to this container.
 	 * \note protected by privlock.
 	 */
-	int numthreads;
+	int numthreads;//线程数
 
 	/*!
 	 * \private
@@ -112,7 +112,7 @@ struct lxc_container {
 	 *
 	 * \internal FIXME: do we want the whole lxc_handler?
 	 */
-	struct lxc_conf *lxc_conf;
+	struct lxc_conf *lxc_conf;//容器配置
 
 	/* public fields */
 	/*! Human-readable string representing last error */
@@ -125,7 +125,7 @@ struct lxc_container {
 	bool daemonize;
 
 	/*! Full path to configuration file */
-	char *config_path;
+	char *config_path;//配置文件路径
 
 	/*!
 	 * \brief Determine if \c /var/lib/lxc/$name/config exists.
@@ -193,6 +193,7 @@ struct lxc_container {
 	 *
 	 * \return \c true on success, else \c false.
 	 */
+	//配置加载
 	bool (*load_config)(struct lxc_container *c, const char *alt_file);
 
 	/*!
@@ -1101,11 +1102,11 @@ int list_all_containers(const char *lxcpath, char ***names, struct lxc_container
 
 struct lxc_log {
 	const char *name;
-	const char *lxcpath;
-	const char *file;
-	const char *level;
-	const char *prefix;
-	bool quiet;
+	const char *lxcpath;//使用第一个lxcpath
+	const char *file;//log文件路径
+	const char *level;//log级别
+	const char *prefix;//程序名称
+	bool quiet;//是否开启quiet模式
 };
 
 /*!

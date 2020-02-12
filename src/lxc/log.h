@@ -102,7 +102,7 @@ struct lxc_log_appender {
 /* log category object */
 struct lxc_log_category {
 	const char *name;
-	int priority;
+	int priority;//日志优先级
 	struct lxc_log_appender *appender;
 	const struct lxc_log_category *parent;
 };
@@ -191,6 +191,7 @@ static inline const char *lxc_syslog_priority_to_string(int priority)
  */
 static inline int lxc_log_priority_to_int(const char *name)
 {
+    //将日志级别转换为int型的级别表示
 	if (strcasecmp("TRACE", name) == 0)
 		return LXC_LOG_LEVEL_TRACE;
 	if (strcasecmp("DEBUG", name) == 0)

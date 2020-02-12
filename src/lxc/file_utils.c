@@ -36,16 +36,19 @@
 #include "string_utils.h"
 #include "utils.h"
 
+//向文件filename中写入buf
 int lxc_write_to_file(const char *filename, const void *buf, size_t count,
-		      bool add_newline, mode_t mode)
+		      bool add_newline/*是否需要为文件的中添加newline*/, mode_t mode)
 {
 	int fd, saved_errno;
 	ssize_t ret;
 
+	//打开文件filename
 	fd = open(filename, O_WRONLY | O_TRUNC | O_CREAT | O_CLOEXEC, mode);
 	if (fd < 0)
 		return -1;
 
+	//向文件中写入buf
 	ret = lxc_write_nointr(fd, buf, count);
 	if (ret < 0)
 		goto out_error;
@@ -54,6 +57,7 @@ int lxc_write_to_file(const char *filename, const void *buf, size_t count,
 		goto out_error;
 
 	if (add_newline) {
+	    //为文件添加'\n'
 		ret = lxc_write_nointr(fd, "\n", 1);
 		if (ret != 1)
 			goto out_error;
@@ -183,6 +187,7 @@ ssize_t lxc_read_file_expect(const char *path, void *buf, size_t count, const vo
 {
 	__do_close_prot_errno int fd = -EBADF;
 
+	//打开文件并读取count字节，期待其内容与expected_buf相同
 	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0)
 		return -1;
@@ -302,6 +307,7 @@ bool fhas_fs_type(int fd, fs_type_magic magic_val)
 	return is_fs_type(&sb, magic_val);
 }
 
+/*打开文件path*/
 FILE *fopen_cloexec(const char *path, const char *mode)
 {
 	int open_mode = 0;
@@ -346,6 +352,7 @@ FILE *fopen_cloexec(const char *path, const char *mode)
 	return ret;
 }
 
+//实现fd间文件复制
 ssize_t lxc_sendfile_nointr(int out_fd, int in_fd, off_t *offset, size_t count)
 {
 	ssize_t ret;

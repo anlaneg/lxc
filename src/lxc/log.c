@@ -63,13 +63,15 @@
  */
 #define LXC_LOG_TIME_SIZE ((INTTYPE_TO_STRLEN(uint64_t)) * 2)
 
-int lxc_log_fd = -1;
+int lxc_log_fd = -1;//日志文件fd
 static int syslog_enable = 0;
 int lxc_quiet_specified;
 int lxc_log_use_global_fd;
 static int lxc_loglevel_specified;
 
+//日志前缀
 static char log_prefix[LXC_LOG_PREFIX_SIZE] = "lxc";
+//日志文件名称
 static char *log_fname = NULL;
 static char *log_vmname = NULL;
 
@@ -514,6 +516,7 @@ static int log_open(const char *name)
 	int fd;
 	int newfd;
 
+	//打开文件name
 	fd = lxc_unpriv(open(name, O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC, 0660));
 	if (fd < 0) {
 		SYSERROR("Failed to open log file \"%s\"", name);
@@ -523,6 +526,7 @@ static int log_open(const char *name)
 	if (fd > 2)
 		return fd;
 
+	//将fd关联到stderr
 	newfd = fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO);
 	if (newfd == -1)
 		SYSERROR("Failed to dup log fd %d", fd);
@@ -656,13 +660,16 @@ int lxc_log_init(struct lxc_log *log)
 	int lxc_priority = LXC_LOG_LEVEL_ERROR;
 
 	if (!log)
+	    //参数有误
 		return -1;
 
 	if (lxc_log_fd != -1) {
+	    //已初始化
 		WARN("Log already initialized");
 		return 0;
 	}
 
+	//转换日志级别
 	if (log->level)
 		lxc_priority = lxc_log_priority_to_int(log->level);
 

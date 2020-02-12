@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 
+//双链表
 struct lxc_list {
 	void *elem;
 	struct lxc_list *next;

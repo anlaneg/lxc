@@ -613,6 +613,7 @@ int lxc_append_string(char ***list, char *entry)
 	return 0;
 }
 
+//将numstr转换为数字，converted记录转换后的值
 int lxc_safe_uint(const char *numstr, unsigned int *converted)
 {
 	char *err = NULL;
@@ -941,6 +942,7 @@ void remove_trailing_newlines(char *l)
 		*p = '\0';
 }
 
+//跳过空格,制表符，返回左侧第一个非空字符
 int lxc_char_left_gc(const char *buffer, size_t len)
 {
 	size_t i;
@@ -980,6 +982,7 @@ char *lxc_trim_whitespace_in_place(char *buffer)
 	return buffer;
 }
 
+//link是否为空行
 int lxc_is_line_empty(const char *line)
 {
 	int i;
@@ -993,6 +996,7 @@ int lxc_is_line_empty(const char *line)
 	return 1;
 }
 
+//移除字符串结尾的'/'或者'\n'字符
 void remove_trailing_slashes(char *p)
 {
 	int l = strlen(p);

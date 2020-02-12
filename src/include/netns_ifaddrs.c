@@ -173,6 +173,7 @@ static int nl_msg_to_ifaddr(void *pctx, bool *netnsid_aware, struct nlmsghdr *h)
 	struct ifaddrs_ctx *ctx = pctx;
 
 	if (h->nlmsg_type == RTM_NEWLINK) {
+	    //处理link消息
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
 		for (rta = __NLMSG_RTA(h, sizeof(*ifi)); __NLMSG_RTAOK(rta, h);
@@ -367,9 +368,9 @@ static int __ifaddrs_netlink_send(int fd, struct nlmsghdr *nlmsghdr)
 	return ret;
 }
 
-static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type, int af,
+static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type/*消息类型*/, int af,
 				  __s32 netns_id, bool *netnsid_aware,
-				  int (*cb)(void *ctx, bool *netnsid_aware,
+				  int (*cb/*响应回调*/)(void *ctx, bool *netnsid_aware,
 					    struct nlmsghdr *h),
 				  void *ctx)
 {
@@ -396,6 +397,7 @@ static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type, int af,
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
 	if (type == RTM_GETLINK) {
+	    //获取link信息
 		buf = getlink_buf;
 		hdr = (struct nlmsghdr *)buf;
 		hdr->nlmsg_len = NLMSG_LENGTH(sizeof(*ifi_msg));
@@ -405,12 +407,13 @@ static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type, int af,
 
 		property = IFLA_TARGET_NETNSID;
 	} else if (type == RTM_GETADDR) {
+	    //获取地址信息
 		buf = getaddr_buf;
 		hdr = (struct nlmsghdr *)buf;
 		hdr->nlmsg_len = NLMSG_LENGTH(sizeof(*ifa_msg));
 
 		ifa_msg = (struct ifaddrmsg *)__NLMSG_DATA(hdr);
-		ifa_msg->ifa_family = af;
+		ifa_msg->ifa_family = af;//协议族
 
 		property = IFA_TARGET_NETNSID;
 	} else {
@@ -432,6 +435,7 @@ static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type, int af,
 		return -1;
 
 	for (;;) {
+	    //处理netlink响应消息
 		r = recv(fd, u.buf, sizeof(u.buf), MSG_DONTWAIT);
 		if (r <= 0)
 			return -1;
@@ -448,6 +452,7 @@ static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type, int af,
 				return -1;
 			}
 
+			//调用cb处理回调
 			ret = cb(ctx, netnsid_aware, hdr);
 			if (ret)
 				return ret;
@@ -458,7 +463,7 @@ static int __ifaddrs_netlink_recv(int fd, unsigned int seq, int type, int af,
 
 static int __rtnl_enumerate(int link_af, int addr_af, __s32 netns_id,
 			    bool *netnsid_aware,
-			    int (*cb)(void *ctx, bool *netnsid_aware, struct nlmsghdr *h),
+			    int (*cb/*netlink消息响应处理*/)(void *ctx, bool *netnsid_aware, struct nlmsghdr *h),
 			    void *ctx)
 {
 	int fd, r, saved_errno;
@@ -476,9 +481,11 @@ static int __rtnl_enumerate(int link_af, int addr_af, __s32 netns_id,
 		return -1;
 	}
 
+	//获取link信息
 	r = __ifaddrs_netlink_recv(fd, 1, RTM_GETLINK, link_af, netns_id,
 				   &getlink_netnsid_aware, cb, ctx);
 	if (!r)
+	    //获取地址信息
 		r = __ifaddrs_netlink_recv(fd, 2, RTM_GETADDR, addr_af, netns_id,
 					   &getaddr_netnsid_aware, cb, ctx);
 

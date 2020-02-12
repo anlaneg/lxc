@@ -430,17 +430,19 @@ static rettype fnname(struct lxc_container *c)				\
 	return ret;							\
 }
 
-#define WRAP_API_1(rettype, fnname, t1)					\
+#define WRAP_API_1(rettype/*返回值类型*/, fnname/*函数名*/, t1/*函数参数类型*/)					\
 static rettype fnname(struct lxc_container *c, t1 a1)			\
 {									\
 	rettype ret;							\
 	bool reset_config = false;					\
 									\
 	if (!current_config && c && c->lxc_conf) {			\
+	    /*当前没有配置,使用c->lxc_conf做为当前配置*/\
 		current_config = c->lxc_conf;				\
 		reset_config = true;					\
 	}								\
 									\
+	/*通过do_##fnname的函数完成处理*/\
 	ret = do_##fnname(c, a1);					\
 	if (reset_config)						\
 		current_config = NULL;					\
@@ -631,12 +633,14 @@ WRAP_API(pid_t, lxcapi_init_pid)
 
 static bool load_config_locked(struct lxc_container *c, const char *fname)
 {
+    /*申请并初始化conf*/
 	if (!c->lxc_conf)
 		c->lxc_conf = lxc_conf_init();
 
 	if (!c->lxc_conf)
 		return false;
 
+	//通过文件fname配置conf
 	if (lxc_config_read(fname, c->lxc_conf, false) != 0)
 		return false;
 
@@ -655,6 +659,7 @@ static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 
 	fname = c->configfile;
 
+	/*如果指定了alt_file,则使用alt_file做为配置文件*/
 	if (alt_file)
 		fname = alt_file;
 
@@ -675,6 +680,7 @@ static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 	if (lret)
 		return false;
 
+	//加载配置fname
 	ret = load_config_locked(c, fname);
 
 	if (need_disklock)
@@ -685,6 +691,7 @@ static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 	return ret;
 }
 
+//加载配置文件(do_lxcapi_load_config完成具体工作）
 WRAP_API_1(bool, lxcapi_load_config, const char *)
 
 static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
@@ -923,6 +930,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	conf = c->lxc_conf;
 
 	/* initialize handler */
+	//初始化handler
 	handler = lxc_init_handler(c->name, conf, c->config_path, c->daemonize);
 
 	container_mem_unlock(c);
@@ -1066,6 +1074,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 			return false;
 		}
 
+		//写入pid文件
 		ret = lxc_write_to_file(c->pidfile, pidstr, w, false, 0600);
 		if (ret < 0) {
 			free_init_cmd(init_cmd);
@@ -3233,6 +3242,7 @@ static bool set_config_filename(struct lxc_container *c)
 		return false;
 
 	/* $lxc_path + "/" + c->name + "/" + "config" + '\0' */
+	//构造config文件路径
 	len = strlen(c->config_path) + 1 + strlen(c->name) + 1 + strlen(LXC_CONFIG_FNAME) + 1;
 	newpath = malloc(len);
 	if (!newpath)
@@ -3245,6 +3255,7 @@ static bool set_config_filename(struct lxc_container *c)
 		return false;
 	}
 
+	//设置配置文件路径
 	free(c->configfile);
 	c->configfile = newpath;
 
@@ -3341,6 +3352,7 @@ static int do_lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys
 
 WRAP_API_3(int, lxcapi_get_cgroup_item, const char *, char *, int)
 
+//获取全局的配置项key
 const char *lxc_get_global_config_item(const char *key)
 {
 	return lxc_global_config_value(key);
@@ -5304,8 +5316,10 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 	memset(c, 0, sizeof(*c));
 
 	if (configpath)
+	    //指定配置path
 		c->config_path = strdup(configpath);
 	else
+	    //未指定配置path,使用默认值
 		c->config_path = strdup(lxc_global_config_value("lxc.lxcpath"));
 	if (!c->config_path) {
 		fprintf(stderr, "Failed to allocate memory for %s\n", name);
@@ -5314,6 +5328,7 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 
 	remove_trailing_slashes(c->config_path);
 
+	//设置容器名称
 	len = strlen(name);
 	c->name = malloc(len + 1);
 	if (!c->name) {
@@ -5335,11 +5350,13 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 		goto err;
 	}
 
+	//设置配置文件路径
 	if (!set_config_filename(c)) {
 		fprintf(stderr, "Failed to create config file name for %s\n", name);
 		goto err;
 	}
 
+	//如果配置文件存在，则加载配置
 	if (file_exists(c->configfile) && !lxcapi_load_config(c, NULL)) {
 		fprintf(stderr, "Failed to load config for %s\n", name);
 		goto err;

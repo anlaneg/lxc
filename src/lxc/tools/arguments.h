@@ -40,23 +40,24 @@ typedef int (*lxc_arguments_checker_t)(const struct lxc_arguments *);
 
 struct lxc_arguments {
 	const char *help;
+	//显示帮助信息时，此helpfn将被调用
 	void (*helpfn)(const struct lxc_arguments *);
-	const char *progname;
-	const struct option *options;
-	lxc_arguments_parser_t parser;
-	lxc_arguments_checker_t checker;
+	const char *progname;//程序名
+	const struct option *options;//参数选项情况
+	lxc_arguments_parser_t parser;//定制的其它选项解析
+	lxc_arguments_checker_t checker;//定制的参数检查
 
 	const char *name;
-	char *log_file;
-	char *log_priority;
-	int quiet;
+	char *log_file;//日志文件名称
+	char *log_priority;//日志优先级
+	int quiet;//不输出任何信息
 	int daemonize;
-	const char *rcfile;
+	const char *rcfile;//rc文件名称
 	const char *console;
 	const char *console_log;
 	const char *pidfile;
-	const char **lxcpath;
-	int lxcpath_cnt;
+	const char **lxcpath;//指定的container特别path
+	int lxcpath_cnt;//lxcpath数组长度
 	/* set to 0 to accept only 1 lxcpath, -1 for unlimited */
 	int lxcpath_additional;
 

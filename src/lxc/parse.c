@@ -69,7 +69,7 @@ int lxc_strmunmap(void *addr, size_t length)
 	return munmap(addr, length + 1);
 }
 
-int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback, void *data)
+int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback/*遍历回调函数*/, void *data)
 {
 	int saved_errno;
 	ssize_t ret = -1, bytes_sent;
@@ -77,8 +77,10 @@ int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback, void *da
 	int fd = -1, memfd = -1;
 	char *buf = NULL;
 
+	//创建memfd,创建一个在内存中的文件.lxc_config_file
 	memfd = memfd_create(".lxc_config_file", MFD_CLOEXEC);
 	if (memfd < 0) {
+	    //创建memfd失败，改为创建临时文件
 		char template[] = P_tmpdir "/.lxc_config_file_XXXXXX";
 
 		if (errno != ENOSYS) {
@@ -95,6 +97,7 @@ int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback, void *da
 		}
 	}
 
+	//打开配置文件
 	fd = open(file, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		SYSERROR("Failed to open file \"%s\"", file);
@@ -102,6 +105,7 @@ int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback, void *da
 	}
 
 	/* sendfile() handles up to 2GB. No config file should be that big. */
+	//将fd的内容复制到memfd中
 	bytes_sent = lxc_sendfile_nointr(memfd, fd, NULL, LXC_SENDFILE_MAX);
 	if (bytes_sent < 0) {
 		SYSERROR("Failed to sendfile \"%s\"", file);
@@ -115,12 +119,14 @@ int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback, void *da
 	}
 	bytes_sent++;
 
+	//将memfd偏移移动到0位置
 	ret = lseek(memfd, 0, SEEK_SET);
 	if (ret < 0) {
 		SYSERROR("Failed to lseek");
 		goto on_error;
 	}
 
+	//将memfd映射到内存，mmap系统调用下去后仅替换ops即可
 	ret = -1;
 	buf = mmap(NULL, bytes_sent, PROT_READ | PROT_WRITE,
 		   MAP_SHARED | MAP_POPULATE, memfd, 0);
@@ -130,6 +136,7 @@ int lxc_file_for_each_line_mmap(const char *file, lxc_file_cb callback, void *da
 		goto on_error;
 	}
 
+	//buf按'\r\n\0'进行分行，针对每行数据执行callback
 	ret = 0;
 	lxc_iterate_parts(line, buf, "\r\n\0") {
 		ret = callback(line, data);

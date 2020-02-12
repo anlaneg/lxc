@@ -96,10 +96,10 @@ enum {
 };
 
 extern const struct ns_info {
-	const char *proc_name;
-	int clone_flag;
-	const char *flag_name;
-	const char *env_name;
+	const char *proc_name;//各namespace模块在proc文件中名称
+	int clone_flag;//clone此namespace时需要指定的flag
+	const char *flag_name;//flags的名称
+	const char *env_name;//对应的环境变量名称
 } ns_info[LXC_NS_MAX];
 
 #if defined(__ia64__)

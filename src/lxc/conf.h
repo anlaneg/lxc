@@ -259,7 +259,7 @@ struct lxc_conf {
 		const struct id_map *root_nsgid_map;
 	};
 
-	struct lxc_list network;
+	struct lxc_list network;/*网络配置，每个链表元素为lxc_netdev*/
 
 	struct {
 		char *fstab;

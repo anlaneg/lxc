@@ -37,13 +37,13 @@ struct lxc_handler;
 struct lxc_netdev;
 
 enum {
-	LXC_NET_EMPTY,
+	LXC_NET_EMPTY,//lxc不做任何事，由upscript负责接口创建及初始化
 	LXC_NET_VETH,
 	LXC_NET_MACVLAN,
 	LXC_NET_IPVLAN,
 	LXC_NET_PHYS,
 	LXC_NET_VLAN,
-	LXC_NET_NONE,
+	LXC_NET_NONE,//无接口情况
 	LXC_NET_MAXCONFTYPE,
 };
 
@@ -54,9 +54,9 @@ enum {
  * @mask      : network mask
  */
 struct lxc_inetdev {
-	struct in_addr addr;
-	struct in_addr bcast;
-	unsigned int prefix;
+	struct in_addr addr;//接口地址
+	struct in_addr bcast;//广播位置
+	unsigned int prefix;//前缀长度
 };
 
 struct lxc_route {
@@ -93,18 +93,19 @@ struct lxc_route6 {
  * @ifindex : Ifindex of the network device.
  */
 struct ifla_veth {
-	char pair[IFNAMSIZ];
-	char veth1[IFNAMSIZ];
+	char pair[IFNAMSIZ];//用户指定的接口名称
+	char veth1[IFNAMSIZ];//用户未指定时长成的接口名称
 	int ifindex;
 	struct lxc_list ipv4_routes;
 	struct lxc_list ipv6_routes;
+	//桥模式与
 	int mode; /* bridge, router */
 };
 
 struct ifla_vlan {
 	unsigned int   flags;
 	unsigned int   fmask;
-	unsigned short   vid;
+	unsigned short   vid;//vlan值
 	unsigned short   pad;
 };
 
@@ -122,15 +123,15 @@ struct ifla_ipvlan {
  *            namespace.
  */
 struct ifla_phys {
-	int ifindex;
-	int mtu;
+	int ifindex;//接口ifindex
+	int mtu;//物理口源始的mtu值
 };
 
 union netdev_p {
 	struct ifla_macvlan macvlan_attr;
 	struct ifla_ipvlan ipvlan_attr;
 	struct ifla_phys phys_attr;
-	struct ifla_veth veth_attr;
+	struct ifla_veth veth_attr;//对端veth属性
 	struct ifla_vlan vlan_attr;
 };
 
@@ -174,26 +175,26 @@ union netdev_p {
  */
 struct lxc_netdev {
 	ssize_t idx;
-	int ifindex;
-	int type;
+	int ifindex;//设备ifindex
+	int type;//网络设备类型（LXC_NET_VETH,ipvlan,macvlan等）
 	int flags;
-	char link[IFNAMSIZ];
+	char link[IFNAMSIZ];//桥模式时，此值为桥名称
 	bool l2proxy;
 	char name[IFNAMSIZ];
-	char created_name[IFNAMSIZ];
-	char *hwaddr;
-	char *mtu;
-	union netdev_p priv;
-	struct lxc_list ipv4;
-	struct lxc_list ipv6;
+	char created_name[IFNAMSIZ];//生成的本端接口名称
+	char *hwaddr;//硬件地址
+	char *mtu;//用户指定的mtu值
+	union netdev_p priv;//私有数据
+	struct lxc_list ipv4;//ipv4地址集
+	struct lxc_list ipv6;//ipv6地址集
 	bool ipv4_gateway_auto;
 	bool ipv4_gateway_dev;
-	struct in_addr *ipv4_gateway;
+	struct in_addr *ipv4_gateway;//ipv4的gateway地址
 	bool ipv6_gateway_auto;
 	bool ipv6_gateway_dev;
 	struct in6_addr *ipv6_gateway;
-	char *upscript;
-	char *downscript;
+	char *upscript;//接口up需要执行的脚本
+	char *downscript;//接口down需要执行的脚本
 };
 
 /* Convert a string mac address to a socket structure. */

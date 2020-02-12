@@ -120,26 +120,31 @@ out:
 	return err;
 }
 
+//下发ipv4直连路由（下发到main表）
 static int lxc_ipv4_dest_add(int ifindex, struct in_addr *dest, unsigned int netmask)
 {
-	return lxc_ip_route_dest(RTM_NEWROUTE, AF_INET, ifindex, dest, netmask);
+	return lxc_ip_route_dest(RTM_NEWROUTE, AF_INET, ifindex/*出接口*/, dest/*目的网段*/, netmask);
 }
 
+//下发ipv6直连路由（下发到main表）
 static int lxc_ipv6_dest_add(int ifindex, struct in6_addr *dest, unsigned int netmask)
 {
 	return lxc_ip_route_dest(RTM_NEWROUTE, AF_INET6, ifindex, dest, netmask);
 }
 
+//删除ipv4直连路由（下发到main表）
 static int lxc_ipv4_dest_del(int ifindex, struct in_addr *dest, unsigned int netmask)
 {
 	return lxc_ip_route_dest(RTM_DELROUTE, AF_INET, ifindex, dest, netmask);
 }
 
+//删除ipv6直连路由（下发到main表）
 static int lxc_ipv6_dest_del(int ifindex, struct in6_addr *dest, unsigned int netmask)
 {
 	return lxc_ip_route_dest(RTM_DELROUTE, AF_INET6, ifindex, dest, netmask);
 }
 
+//收集所有inetdev设备，下发ipv4直连路由
 static int lxc_setup_ipv4_routes(struct lxc_list *ip, int ifindex)
 {
 	struct lxc_list *iterator;
@@ -159,6 +164,7 @@ static int lxc_setup_ipv4_routes(struct lxc_list *ip, int ifindex)
 	return 0;
 }
 
+//收集所有inet6dev设备，下发ipv6直连路由
 static int lxc_setup_ipv6_routes(struct lxc_list *ip, int ifindex)
 {
 	struct lxc_list *iterator;
@@ -178,6 +184,7 @@ static int lxc_setup_ipv6_routes(struct lxc_list *ip, int ifindex)
 	return 0;
 }
 
+//收集所有inetdev设备，下发ipv4主机路由
 static int setup_ipv4_addr_routes(struct lxc_list *ip, int ifindex)
 {
 	struct lxc_list *iterator;
@@ -197,6 +204,7 @@ static int setup_ipv4_addr_routes(struct lxc_list *ip, int ifindex)
 	return 0;
 }
 
+//收集所有inet6dev设备，下发ipv6主机路由
 static int setup_ipv6_addr_routes(struct lxc_list *ip, int ifindex)
 {
 	struct lxc_list *iterator;
@@ -272,15 +280,18 @@ static int lxc_del_ip_neigh_proxy(const char *ip, const char *dev)
 	return 0;
 }
 
+//检查ifname是否开启了forwarding
 static int lxc_is_ip_forwarding_enabled(const char *ifname, int family)
 {
 	int ret;
 	char path[PATH_MAX];
 	char buf[1] = "";
 
+	//不考虑inet4,inet6之外的情况
 	if (family != AF_INET && family != AF_INET6)
 		return minus_one_set_errno(EINVAL);
 
+	//检查ifname的ipv4/ipv6是否开启了forwarding
 	ret = snprintf(path, PATH_MAX, "/proc/sys/net/%s/conf/%s/%s",
 		       family == AF_INET ? "ipv4" : "ipv6", ifname,
 		       "forwarding");
@@ -290,10 +301,11 @@ static int lxc_is_ip_forwarding_enabled(const char *ifname, int family)
 	return lxc_read_file_expect(path, buf, 1, "1");
 }
 
+//veth接口创建及配置
 static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	int bridge_index, err;
-	char *veth1, *veth2;
+	char *veth1/*对端接口*/, *veth2/*本端接口*/;
 	char veth1buf[IFNAMSIZ], veth2buf[IFNAMSIZ];
 	unsigned int mtu = 0;
 
@@ -302,6 +314,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		if (handler->conf->reboot)
 			lxc_netdev_delete_by_name(veth1);
 	} else {
+	    //生成veth1接口名称
 		err = snprintf(veth1buf, sizeof(veth1buf), "vethXXXXXX");
 		if (err < 0 || (size_t)err >= sizeof(veth1buf))
 			return -1;
@@ -314,6 +327,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		memcpy(netdev->priv.veth_attr.veth1, veth1, IFNAMSIZ);
 	}
 
+	//生成veth2名称
 	err = snprintf(veth2buf, sizeof(veth2buf), "vethXXXXXX");
 	if (err < 0 || (size_t)err >= sizeof(veth2buf))
 		return -1;
@@ -322,6 +336,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 	if (!veth2)
 		goto out_delete;
 
+	//创建一队veth
 	err = lxc_veth_create(veth1, veth2);
 	if (err) {
 		errno = -err;
@@ -353,18 +368,22 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 	 * host's network namespace to the container's network namespace later
 	 * on.
 	 */
+	//veth2为本端设备，故使用eth2 的ifindex
 	netdev->ifindex = if_nametoindex(veth2);
 	if (!netdev->ifindex) {
 		ERROR("Failed to retrieve ifindex for \"%s\"", veth2);
 		goto out_delete;
 	}
 
+	//mtu值确定
 	if (netdev->mtu) {
+	    //检查netdev上的mtu配置是否为数字
 		if (lxc_safe_uint(netdev->mtu, &mtu) < 0)
 			WARN("Failed to parse mtu");
 		else
 			INFO("Retrieved mtu %d", mtu);
 	} else if (netdev->link[0] != '\0') {
+	    //如果mtu未配置，有桥接口，则使用桥接口mtu,否则使用netdev自身mtu
 		bridge_index = if_nametoindex(netdev->link);
 		if (bridge_index) {
 			mtu = netdev_get_mtu(bridge_index);
@@ -375,6 +394,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		}
 	}
 
+	//如果指定了mtu,则为veth1,veth2添加mtu
 	if (mtu) {
 		err = lxc_netdev_set_mtu(veth1, mtu);
 		if (!err)
@@ -388,7 +408,9 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		}
 	}
 
+	//如果是桥模式，则将veth1接口添加到桥上
 	if (netdev->link[0] != '\0' && netdev->priv.veth_attr.mode == VETH_MODE_BRIDGE) {
+	    //如果采用桥模式，则将veth1附着到bridge上
 		err = lxc_bridge_attach(netdev->link, veth1);
 		if (err) {
 			errno = -err;
@@ -399,6 +421,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		INFO("Attached \"%s\" to bridge \"%s\"", veth1, netdev->link);
 	}
 
+	//使veth1接口up
 	err = lxc_netdev_up(veth1);
 	if (err) {
 		errno = -err;
@@ -407,18 +430,21 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 	}
 
 	/* setup ipv4 routes on the host interface */
+	//下发ipv4直连路由
 	if (lxc_setup_ipv4_routes(&netdev->priv.veth_attr.ipv4_routes, netdev->priv.veth_attr.ifindex)) {
 		ERROR("Failed to setup ipv4 routes for network device \"%s\"", veth1);
 		goto out_delete;
 	}
 
 	/* setup ipv6 routes on the host interface */
+	//下发ipv6直连路由
 	if (lxc_setup_ipv6_routes(&netdev->priv.veth_attr.ipv6_routes, netdev->priv.veth_attr.ifindex)) {
 		ERROR("Failed to setup ipv6 routes for network device \"%s\"", veth1);
 		goto out_delete;
 	}
 
 	if (netdev->priv.veth_attr.mode == VETH_MODE_ROUTER) {
+	    //添加ipv4 gateway代理
 		if (netdev->ipv4_gateway) {
 			char bufinet4[INET_ADDRSTRLEN];
 			if (!inet_ntop(AF_INET, netdev->ipv4_gateway, bufinet4, sizeof(bufinet4))) {
@@ -432,6 +458,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 				goto out_delete;
 			}
 
+			//在veth1上添加ipv4_gateway的邻居表项代理
 			err = lxc_add_ip_neigh_proxy(bufinet4, veth1);
 			if (err) {
 				error_log_errno(err, "Failed to add gateway ipv4 proxy on \"%s\"", veth1);
@@ -490,6 +517,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		}
 	}
 
+	//如果有upscript,则构造参数执行upscript
 	if (netdev->upscript) {
 		char *argv[] = {
 		    "veth",
@@ -516,6 +544,7 @@ out_delete:
 	return -1;
 }
 
+//使用macvlan接口做为容器接口
 static int instantiate_macvlan(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	char peer[IFNAMSIZ];
@@ -591,6 +620,7 @@ on_error:
 	return -1;
 }
 
+//ipvlan接口创建
 static int lxc_ipvlan_create(const char *master, const char *name, int mode, int isolation)
 {
 	int err, index, len;
@@ -678,6 +708,7 @@ out:
 	return 0;
 }
 
+//使用ipvlan方式做为容器接口
 static int instantiate_ipvlan(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	char peer[IFNAMSIZ];
@@ -689,6 +720,7 @@ static int instantiate_ipvlan(struct lxc_handler *handler, struct lxc_netdev *ne
 		return -1;
 	}
 
+	//构造ip前缀的接口名称
 	err = snprintf(peer, sizeof(peer), "ipXXXXXX");
 	if (err < 0 || (size_t)err >= sizeof(peer))
 		return -1;
@@ -712,6 +744,7 @@ static int instantiate_ipvlan(struct lxc_handler *handler, struct lxc_netdev *ne
 		goto on_error;
 	}
 
+	//mtu配置
 	if (netdev->mtu) {
 		err = lxc_safe_uint(netdev->mtu, &mtu);
 		if (err < 0) {
@@ -730,6 +763,7 @@ static int instantiate_ipvlan(struct lxc_handler *handler, struct lxc_netdev *ne
 		}
 	}
 
+	//执行upscript脚本
 	if (netdev->upscript) {
 		char *argv[] = {
 		    "ipvlan",
@@ -753,6 +787,7 @@ on_error:
 	return -1;
 }
 
+//使用vlan接口做为容器对外接口
 static int instantiate_vlan(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	char peer[IFNAMSIZ];
@@ -786,6 +821,7 @@ static int instantiate_vlan(struct lxc_handler *handler, struct lxc_netdev *netd
 		goto on_error;
 	}
 
+	//mtu配置
 	if (netdev->mtu) {
 		err = lxc_safe_uint(netdev->mtu, &mtu);
 		if (err < 0) {
@@ -804,6 +840,7 @@ static int instantiate_vlan(struct lxc_handler *handler, struct lxc_netdev *netd
 		}
 	}
 
+	//执行upscript脚本
 	if (netdev->upscript) {
 		char *argv[] = {
 		    "vlan",
@@ -828,11 +865,13 @@ on_error:
 	return -1;
 }
 
+//使用系统存在的接口
 static int instantiate_phys(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	int err, mtu_orig = 0;
 	unsigned int mtu = 0;
 
+	//接口名称不能为空
 	if (netdev->link[0] == '\0') {
 		ERROR("No link for physical interface specified");
 		return -1;
@@ -872,6 +911,7 @@ static int instantiate_phys(struct lxc_handler *handler, struct lxc_netdev *netd
 
 	netdev->priv.phys_attr.mtu = mtu_orig;
 
+	//如果用户指定了mtu,则执行mtu配置
 	if (netdev->mtu) {
 		err = lxc_safe_uint(netdev->mtu, &mtu);
 		if (err < 0) {
@@ -890,6 +930,7 @@ static int instantiate_phys(struct lxc_handler *handler, struct lxc_netdev *netd
 		}
 	}
 
+	//执行upscript
 	if (netdev->upscript) {
 		char *argv[] = {
 		    "phys",
@@ -910,6 +951,7 @@ static int instantiate_phys(struct lxc_handler *handler, struct lxc_netdev *netd
 	return 0;
 }
 
+//empty时，由upscript负责创建及配置接口
 static int instantiate_empty(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	int ret;
@@ -930,6 +972,7 @@ static int instantiate_empty(struct lxc_handler *handler, struct lxc_netdev *net
 	return 0;
 }
 
+//无netdev创建
 static int instantiate_none(struct lxc_handler *handler, struct lxc_netdev *netdev)
 {
 	netdev->ifindex = 0;
@@ -1127,6 +1170,7 @@ out:
 	return err;
 }
 
+//通过ifindex将网络设备移动到pid对应的net namespace中
 int lxc_netdev_move_by_index(int ifindex, pid_t pid, const char *ifname)
 {
 	int err;
@@ -1152,6 +1196,7 @@ int lxc_netdev_move_by_index(int ifindex, pid_t pid, const char *ifname)
 	ifi->ifi_family = AF_UNSPEC;
 	ifi->ifi_index = ifindex;
 
+	//指定进程pid,用于将ifindex移动到pid对应的namespace中
 	if (nla_put_u32(nlmsg, IFLA_NET_NS_PID, pid))
 		goto out;
 
@@ -1300,6 +1345,7 @@ int lxc_netdev_move_by_name(const char *ifname, pid_t pid, const char* newname)
 	return lxc_netdev_move_by_index(index, pid, newname);
 }
 
+//通过ifindex删除link
 int lxc_netdev_delete_by_index(int ifindex)
 {
 	int err;
@@ -1320,6 +1366,7 @@ int lxc_netdev_delete_by_index(int ifindex)
 	if (!answer)
 		goto out;
 
+	//指明删除link
 	nlmsg->nlmsghdr->nlmsg_flags = NLM_F_ACK | NLM_F_REQUEST;
 	nlmsg->nlmsghdr->nlmsg_type = RTM_DELLINK;
 
@@ -1337,14 +1384,17 @@ out:
 	return err;
 }
 
+//删除名称为name的netdev
 int lxc_netdev_delete_by_name(const char *name)
 {
 	int index;
 
+	//通过接口名称获取ifindex
 	index = if_nametoindex(name);
 	if (!index)
 		return -EINVAL;
 
+	//通过ifindex删除netdev
 	return lxc_netdev_delete_by_index(index);
 }
 
@@ -1409,6 +1459,7 @@ int lxc_netdev_rename_by_name(const char *oldname, const char *newname)
 	return lxc_netdev_rename_by_index(index, newname);
 }
 
+//通过netlink设置接口name的状态
 int netdev_set_flag(const char *name, int flag)
 {
 	int err, index, len;
@@ -1661,6 +1712,7 @@ out:
 	return err;
 }
 
+//为接口name设置mtu
 int lxc_netdev_set_mtu(const char *name, int mtu)
 {
 	int err, index, len;
@@ -1702,6 +1754,7 @@ int lxc_netdev_set_mtu(const char *name, int mtu)
 	ifi->ifi_family = AF_UNSPEC;
 	ifi->ifi_index = index;
 
+	//设置接口mtu
 	if (nla_put_u32(nlmsg, IFLA_MTU, mtu))
 		goto out;
 
@@ -1713,16 +1766,19 @@ out:
 	return err;
 }
 
+//置接口up
 int lxc_netdev_up(const char *name)
 {
 	return netdev_set_flag(name, IFF_UP);
 }
 
+//置接口down
 int lxc_netdev_down(const char *name)
 {
 	return netdev_set_flag(name, 0);
 }
 
+//创建两个veth对儿
 int lxc_veth_create(const char *name1, const char *name2)
 {
 	int err, len;
@@ -1755,7 +1811,7 @@ int lxc_veth_create(const char *name1, const char *name2)
 
 	nlmsg->nlmsghdr->nlmsg_flags =
 	    NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
-	nlmsg->nlmsghdr->nlmsg_type = RTM_NEWLINK;
+	nlmsg->nlmsghdr->nlmsg_type = RTM_NEWLINK;//指明新建link
 
 	ifi = nlmsg_reserve(nlmsg, sizeof(struct ifinfomsg));
 	if (!ifi)
@@ -1767,6 +1823,7 @@ int lxc_veth_create(const char *name1, const char *name2)
 	if (!nest1)
 		goto out;
 
+	//指定要创建的link类型
 	if (nla_put_string(nlmsg, IFLA_INFO_KIND, "veth"))
 		goto out;
 
@@ -1774,6 +1831,7 @@ int lxc_veth_create(const char *name1, const char *name2)
 	if (!nest2)
 		goto out;
 
+	//将name2做为对端名称
 	nest3 = nla_begin_nested(nlmsg, VETH_INFO_PEER);
 	if (!nest3)
 		goto out;
@@ -1791,6 +1849,7 @@ int lxc_veth_create(const char *name1, const char *name2)
 	nla_end_nested(nlmsg, nest2);
 	nla_end_nested(nlmsg, nest1);
 
+	//name1为本端名称
 	if (nla_put_string(nlmsg, IFLA_IFNAME, name1))
 		goto out;
 
@@ -1838,6 +1897,7 @@ int lxc_vlan_create(const char *master, const char *name, unsigned short vlanid)
 	if (!lindex)
 		goto err1;
 
+	//指明新建link
 	nlmsg->nlmsghdr->nlmsg_flags =
 	    NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
 	nlmsg->nlmsghdr->nlmsg_type = RTM_NEWLINK;
@@ -1853,6 +1913,7 @@ int lxc_vlan_create(const char *master, const char *name, unsigned short vlanid)
 	if (!nest)
 		goto err1;
 
+	//指明创建vlan接口
 	if (nla_put_string(nlmsg, IFLA_INFO_KIND, "vlan"))
 		goto err1;
 
@@ -1860,15 +1921,18 @@ int lxc_vlan_create(const char *master, const char *name, unsigned short vlanid)
 	if (!nest2)
 		goto err1;
 
+	//指明使用的vlanid
 	if (nla_put_u16(nlmsg, IFLA_VLAN_ID, vlanid))
 		goto err1;
 
 	nla_end_nested(nlmsg, nest2);
 	nla_end_nested(nlmsg, nest);
 
+	//指明master接口
 	if (nla_put_u32(nlmsg, IFLA_LINK, lindex))
 		goto err1;
 
+	//指明要创建的接口名称
 	if (nla_put_string(nlmsg, IFLA_IFNAME, name))
 		goto err1;
 
@@ -1978,6 +2042,7 @@ static int proc_sys_net_write(const char *path, const char *value)
 	return err;
 }
 
+//将ifname设置成forwarding模式
 static int ip_forwarding_set(const char *ifname, int family, int flag)
 {
 	int ret;
@@ -2419,6 +2484,8 @@ int lxc_ipv6_gateway_add(int ifindex, struct in6_addr *gw)
 {
 	return ip_gateway_add(AF_INET6, ifindex, gw);
 }
+
+//如果bridge没有bridge文件时即为ovs桥
 bool is_ovs_bridge(const char *bridge)
 {
 	int ret;
@@ -2482,6 +2549,7 @@ static int lxc_ovs_attach_bridge_exec(void *data)
 	return -1;
 }
 
+//通过ovs-vsctl add-port命令将nic添加到桥上
 static int lxc_ovs_attach_bridge(const char *bridge, const char *nic)
 {
 	int ret;
@@ -2501,7 +2569,8 @@ static int lxc_ovs_attach_bridge(const char *bridge, const char *nic)
 	return 0;
 }
 
-int lxc_bridge_attach(const char *bridge, const char *ifname)
+//将接口ifname添加到bridge桥上，支持linux bridge 与openvswitch两种方式
+int lxc_bridge_attach(const char *bridge/*桥名称*/, const char *ifname/*附到桥上的接口名称*/)
 {
 	int err, fd, index;
 	size_t retlen;
@@ -2514,9 +2583,11 @@ int lxc_bridge_attach(const char *bridge, const char *ifname)
 	if (!index)
 		return -EINVAL;
 
+	//如果bridge为ovs桥，则附着在ovs桥上
 	if (is_ovs_bridge(bridge))
 		return lxc_ovs_attach_bridge(bridge, ifname);
 
+	//将接口ifname附加到linux bridge上
 	fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd < 0)
 		return -errno;
@@ -2557,6 +2628,7 @@ const char *lxc_net_type_to_str(int type)
 
 static const char padchar[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+//依据模块生成可使用的接口名称
 char *lxc_mkifname(char *template)
 {
 	int ret;
@@ -2573,10 +2645,12 @@ char *lxc_mkifname(char *template)
 	(void)randseed(true);
 #endif
 
+	//模板必须小于IFNAMSIZ
 	if (strlen(template) >= IFNAMSIZ)
 		return NULL;
 
 	/* Get all the network interfaces. */
+	//收集所有network的接口信息，用于防止名称冲突
 	ret = netns_getifaddrs(&ifaddr, -1, &(bool){false});
 	if (ret < 0) {
 		SYSERROR("Failed to get network interfaces");
@@ -2590,6 +2664,7 @@ char *lxc_mkifname(char *template)
 
 		exists = false;
 
+		//填充随机名称
 		for (i = 0; i < strlen(name); i++) {
 			if (name[i] == 'X') {
 #ifdef HAVE_RAND_R
@@ -2600,6 +2675,7 @@ char *lxc_mkifname(char *template)
 			}
 		}
 
+		//检查此名称的接口是否已存在
 		for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
 			if (!strcmp(ifa->ifa_name, name)) {
 				exists = true;
@@ -2607,6 +2683,7 @@ char *lxc_mkifname(char *template)
 			}
 		}
 
+		//此名称不存在，则可使用
 		if (!exists)
 			break;
 	}
@@ -2617,6 +2694,7 @@ char *lxc_mkifname(char *template)
 	return template;
 }
 
+//更新veth1接口mac地址
 int setup_private_host_hw_addr(char *veth1)
 {
 	int err, sockfd;
@@ -2632,12 +2710,14 @@ int setup_private_host_hw_addr(char *veth1)
 		return -E2BIG;
 	}
 
+	//取接口veth1的mac地址
 	err = ioctl(sockfd, SIOCGIFHWADDR, &ifr);
 	if (err < 0) {
 		close(sockfd);
 		return -errno;
 	}
 
+	//更新接口mac地址为fe开头
 	ifr.ifr_hwaddr.sa_data[0] = 0xfe;
 	err = ioctl(sockfd, SIOCSIFHWADDR, &ifr);
 	close(sockfd);
@@ -3055,6 +3135,7 @@ clear_ifindices:
 	return true;
 }
 
+//添加arp,nd代理
 static int lxc_setup_l2proxy(struct lxc_netdev *netdev) {
 	struct lxc_list *cur, *next;
 	struct lxc_inetdev *inet4dev;
@@ -3235,11 +3316,13 @@ static int lxc_delete_l2proxy(struct lxc_netdev *netdev) {
 	return 0;
 }
 
+//创建handler指定的所有netdev设备
 static int lxc_create_network_priv(struct lxc_handler *handler)
 {
 	struct lxc_list *iterator;
 	struct lxc_list *network = &handler->conf->network;
 
+	//遍历配置的每个netdev
 	lxc_list_for_each(iterator, network) {
 		struct lxc_netdev *netdev = iterator->elem;
 
@@ -3256,6 +3339,7 @@ static int lxc_create_network_priv(struct lxc_handler *handler)
 			}
 		}
 
+		//创建netdev设备
 		if (netdev_conf[netdev->type](handler, netdev)) {
 			ERROR("Failed to create network device");
 			return -1;
@@ -3265,6 +3349,7 @@ static int lxc_create_network_priv(struct lxc_handler *handler)
 	return 0;
 }
 
+//将handler中对应的netdev移至对应的net namespace
 int lxc_network_move_created_netdev_priv(struct lxc_handler *handler)
 {
 	pid_t pid = handler->pid;
@@ -3274,6 +3359,7 @@ int lxc_network_move_created_netdev_priv(struct lxc_handler *handler)
 	if (am_guest_unpriv())
 		return 0;
 
+	//遍历所有netdev,将其移至相应的net namespace
 	lxc_list_for_each(iterator, network) {
 		__do_free char *physname = NULL;
 		int ret;
@@ -3282,12 +3368,14 @@ int lxc_network_move_created_netdev_priv(struct lxc_handler *handler)
 		if (!netdev->ifindex)
 			continue;
 
+		//如果网络类型为物理口，则物理口为无线口，则通过iw方式移至对应的net namespace
 		if (netdev->type == LXC_NET_PHYS)
 			physname = is_wlan(netdev->link);
 
 		if (physname)
 			ret = lxc_netdev_move_wlan(physname, netdev->link, pid, NULL);
 		else
+		    //将接口移动到pid对应的net namespace
 			ret = lxc_netdev_move_by_index(netdev->ifindex, pid, NULL);
 		if (ret) {
 			errno = -ret;
@@ -3906,6 +3994,7 @@ int lxc_network_send_to_child(struct lxc_handler *handler)
 	struct lxc_list *network = &handler->conf->network;
 	int data_sock = handler->data_sock[0];
 
+	//遍历network下所有netdev设备
 	lxc_list_for_each(iterator, network) {
 		int ret;
 		struct lxc_netdev *netdev = iterator->elem;
@@ -3913,10 +4002,12 @@ int lxc_network_send_to_child(struct lxc_handler *handler)
 		if (!network_requires_advanced_setup(netdev->type))
 			continue;
 
+		//向data_sock发送netdev名称
 		ret = lxc_send_nointr(data_sock, netdev->name, IFNAMSIZ, MSG_NOSIGNAL);
 		if (ret < 0)
 			return -1;
 
+		//向data_sock发送created_name
 		ret = lxc_send_nointr(data_sock, netdev->created_name, IFNAMSIZ, MSG_NOSIGNAL);
 		if (ret < 0)
 			return -1;
@@ -4030,6 +4121,7 @@ void lxc_delete_network(struct lxc_handler *handler)
 		DEBUG("Deleted network devices");
 }
 
+//创建当前net ns与fd指定的peer ns间的关联关系（nsid)
 int lxc_netns_set_nsid(int fd)
 {
 	int ret;
@@ -4040,6 +4132,8 @@ int lxc_netns_set_nsid(int fd)
 	struct nlmsghdr *hdr;
 	struct rtgenmsg *msg;
 	int saved_errno;
+	/*指定ns_id为-1，即动态申请当前net namespace与peer net
+	 * namespace(由netns_fd指出)的映射id*/
 	const __s32 ns_id = -1;
 	const __u32 netns_fd = fd;
 
@@ -4059,13 +4153,15 @@ int lxc_netns_set_nsid(int fd)
 	hdr->nlmsg_type = RTM_NEWNSID;
 	hdr->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 	hdr->nlmsg_pid = 0;
-	hdr->nlmsg_seq = RTM_NEWNSID;
+	hdr->nlmsg_seq = RTM_NEWNSID;/*指明创建ns间关联关系*/
 	msg->rtgen_family = AF_UNSPEC;
 
+	//指定对端net ns
 	ret = addattr(hdr, 1024, __LXC_NETNSA_FD, &netns_fd, sizeof(netns_fd));
 	if (ret < 0)
 		goto on_error;
 
+	//指明申请动态nsid
 	ret = addattr(hdr, 1024, __LXC_NETNSA_NSID, &ns_id, sizeof(ns_id));
 	if (ret < 0)
 		goto on_error;
@@ -4169,15 +4265,18 @@ int lxc_netns_get_nsid(int fd)
 	return -1;
 }
 
+//容器的网络创建
 int lxc_create_network(struct lxc_handler *handler)
 {
 	int ret;
 
 	if (handler->am_root) {
+	    //创建并up设备
 		ret = lxc_create_network_priv(handler);
 		if (ret)
 			return -1;
 
+		//将所有网络设备移至到对应的net namespace
 		return lxc_network_move_created_netdev_priv(handler);
 	}
 

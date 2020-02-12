@@ -54,10 +54,10 @@ typedef int (*config_clr_cb)(const char *key, struct lxc_conf *conf,
 			     void *data);
 
 struct lxc_config_t {
-	char *name;
-	config_set_cb set;
-	config_get_cb get;
-	config_clr_cb clr;
+	char *name;//配置名称
+	config_set_cb set;//具体配置的set函数
+	config_get_cb get;//具体配置的get函数
+	config_clr_cb clr;//具体配置的clear函数
 };
 
 struct new_config_item {

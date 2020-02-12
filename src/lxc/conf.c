@@ -122,6 +122,7 @@ lxc_log_define(conf, lxc);
 /* The lxc_conf of the container currently being worked on in an API call.
  * This is used in the error calls.
  */
+//当前生效的配置
 #ifdef HAVE_TLS
 thread_local struct lxc_conf *current_config;
 #else
@@ -360,7 +361,7 @@ static int run_buffer(char *buffer)
 }
 
 int run_script_argv(const char *name, unsigned int hook_version,
-		    const char *section, const char *script,
+		    const char *section, const char *script/*脚本名称*/,
 		    const char *hookname, char **argv)
 {
 	__do_free char *buffer = NULL;
@@ -373,6 +374,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 	else
 		INFO("Executing script \"%s\" for container \"%s\"", script, name);
 
+	//计算命令行参数长度
 	for (i = 0; argv && argv[i]; i++)
 		size += strlen(argv[i]) + 1;
 
@@ -398,6 +400,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 			return -EFBIG;
 	}
 
+	//申请对应长度的buffer
 	buffer = malloc(size);
 	if (!buffer)
 		return -ENOMEM;
@@ -2694,6 +2697,7 @@ int setup_proc_filesystem(struct lxc_list *procs, pid_t pid)
 
 static char *default_rootfs_mount = LXCROOTFSMOUNT;
 
+//lxc_conf初始化
 struct lxc_conf *lxc_conf_init(void)
 {
 	int i;

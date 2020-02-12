@@ -172,6 +172,7 @@ static int ensure_path(char **confpath, const char *path)
 	return 0;
 }
 
+//lxc_start入口
 int main(int argc, char *argv[])
 {
 	const char *lxcpath;
@@ -190,14 +191,17 @@ int main(int argc, char *argv[])
 	if (lxc_caps_init())
 		exit(err);
 
+	//参数解析
 	if (lxc_arguments_parse(&my_args, argc, argv))
 		exit(err);
 
 	if (!my_args.argc)
+	    //未提供其它参数，则使用默认参数
 		args = default_args;
 	else
 		args = my_args.argv;
 
+	//初始化log
 	log.name = my_args.name;
 	log.file = my_args.log_file;
 	log.level = my_args.log_priority;
@@ -208,6 +212,7 @@ int main(int argc, char *argv[])
 	if (lxc_log_init(&log))
 		exit(err);
 
+	//lxcpath必须可读
 	lxcpath = my_args.lxcpath[0];
 	if (access(lxcpath, O_RDONLY) < 0) {
 		ERROR("You lack access to %s", lxcpath);
@@ -224,7 +229,7 @@ int main(int argc, char *argv[])
 	if (my_args.rcfile) {
 		rcfile = (char *)my_args.rcfile;
 
-		c = lxc_container_new(my_args.name, lxcpath);
+		c = lxc_container_new(my_args.name, lxcpath/*容器配置文件全路径*/);
 		if (!c) {
 			ERROR("Failed to create lxc_container");
 			exit(err);

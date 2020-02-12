@@ -44,6 +44,7 @@
 #include "initutils.h"
 #include "namespace.h"
 
+//利用a_optsions选项数组，构造其对应的短选项字符串
 static int build_shortopts(const struct option *a_options, char *a_shortopts,
 			   size_t a_size)
 {
@@ -53,15 +54,19 @@ static int build_shortopts(const struct option *a_options, char *a_shortopts,
 	if (!a_options || !a_shortopts || !a_size)
 		return -1;
 
+	//遍历所有选项，如果选项有ascii码的opt val,则将其加入到短选项buffer中
 	for (opt = a_options; opt->name; opt++) {
 		if (!isascii(opt->val))
 			continue;
 
+		//shortopts空间可存放，存放
 		if (i < a_size)
 			a_shortopts[i++] = opt->val;
 		else
+		    //空间不足
 			goto is2big;
 
+		//如果此选项有参数，则添加':'
 		if (opt->has_arg == no_argument)
 			continue;
 
@@ -70,6 +75,7 @@ static int build_shortopts(const struct option *a_options, char *a_shortopts,
 		else
 			goto is2big;
 
+		//如果此选项参数是可选的，则添加'::'
 		if (opt->has_arg == required_argument)
 			continue;
 
@@ -79,6 +85,7 @@ static int build_shortopts(const struct option *a_options, char *a_shortopts,
 			goto is2big;
 	}
 
+	//给定字符串结尾
 	if (i < a_size)
 		a_shortopts[i] = '\0';
 	else
@@ -91,6 +98,7 @@ is2big:
 	return -1;
 }
 
+//显示longopts的信息，并退出
 __noreturn static void print_usage_exit(const struct option longopts[],
 					  const struct lxc_arguments *a_args)
 
@@ -98,14 +106,18 @@ __noreturn static void print_usage_exit(const struct option longopts[],
 	int i;
 	const struct option *opt;
 
+	//显示程序名称
 	fprintf(stderr, "Usage: %s ", a_args->progname);
 
+	//遍历显示各选项
 	for (opt = longopts, i = 1; opt->name; opt++, i++) {
 		fprintf(stderr, "[");
 
+		//输出短选项
 		if (isprint(opt->val))
 			fprintf(stderr, "-%c|", opt->val);
 
+		//输出长选项
 		fprintf(stderr, "--%s", opt->name);
 
 		if ((opt->has_arg == required_argument) ||
@@ -117,9 +129,11 @@ __noreturn static void print_usage_exit(const struct option longopts[],
 			if (!uppername)
 				exit(-ENOMEM);
 
+			//将选项名称转发为全大写
 			for (j = 0; uppername[j]; j++)
 				uppername[j] = toupper(uppername[j]);
 
+			//必选项及可选项的格式化输出
 			if (opt->has_arg == required_argument)
 				fprintf(stderr, "=%s", uppername);
 			else	// optional_argument
@@ -130,6 +144,7 @@ __noreturn static void print_usage_exit(const struct option longopts[],
 
 		fprintf(stderr, "] ");
 
+		//每4个选项，输出一个回车换行（4这个数字可做为一个参数传入）
 		if (!(i % 4))
 			fprintf(stderr, "\n\t");
 	}
@@ -138,14 +153,16 @@ __noreturn static void print_usage_exit(const struct option longopts[],
 	exit(EXIT_SUCCESS);
 }
 
+//显示版本号并退出
 __noreturn static void print_version_exit()
 {
 	printf("%s\n", lxc_get_version());
 	exit(EXIT_SUCCESS);
 }
 
-__noreturn static void print_help_exit(const struct lxc_arguments *args,
-					 int code)
+//显示帮助信息
+__noreturn static void print_help_exit(const struct lxc_arguments *args/*helpfn将被调用*/,
+					 int code/*退出码*/)
 {
 	fprintf(stderr, "\
 Usage: %s %s\
@@ -171,6 +188,7 @@ See the %s man page for further information.\n\n",
 	exit(code);
 }
 
+//lxcpath路径添加
 static int lxc_arguments_lxcpath_add(struct lxc_arguments *args,
 				     const char *lxcpath)
 {
@@ -182,6 +200,7 @@ static int lxc_arguments_lxcpath_add(struct lxc_arguments *args,
 		exit(EXIT_FAILURE);
 	}
 
+	//申请空间，存放lxcpath
 	args->lxcpath = realloc(
 	    args->lxcpath, (args->lxcpath_cnt + 1) * sizeof(args->lxcpath[0]));
 	if (args->lxcpath == NULL) {
@@ -193,6 +212,7 @@ static int lxc_arguments_lxcpath_add(struct lxc_arguments *args,
 	return 0;
 }
 
+//lxc参数解析
 extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 			       char *const argv[])
 {
@@ -200,6 +220,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 	bool logfile = false;
 	char shortopts[256];
 
+	//构造短选项
 	ret = build_shortopts(args->options, shortopts, sizeof(shortopts));
 	if (ret < 0) {
 		lxc_error(args, "build_shortopts() failed : %s",
@@ -207,6 +228,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 		return ret;
 	}
 
+	//解析所有参数
 	for (;;) {
 		int c;
 		int index = 0;
@@ -237,14 +259,17 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 			args->rcfile = optarg;
 			break;
 		case 'P':
+		    //收集指定的特别container path
 			remove_trailing_slashes(optarg);
 			ret = lxc_arguments_lxcpath_add(args, optarg);
 			if (ret < 0)
 				return ret;
 			break;
 		case OPT_USAGE:
+		    //显示用法信息并退出
 			print_usage_exit(args->options, args);
 		case OPT_VERSION:
+		    //显示版本信息并退出
 			print_version_exit();
 		case '?':
 			print_help_exit(args, 1);
@@ -267,6 +292,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 
 	/* If no lxcpaths were given, use default */
 	if (!args->lxcpath_cnt) {
+	    /*用户没有指出lxcpath,添加默认path*/
 		ret = lxc_arguments_lxcpath_add(
 		    args, lxc_get_global_config_item("lxc.lxcpath"));
 		if (ret < 0)
@@ -276,6 +302,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 	/* Check the command options */
 	if (!args->name && strncmp(args->progname, "lxc-autostart", strlen(args->progname)) != 0
 	                && strncmp(args->progname, "lxc-unshare", strlen(args->progname)) != 0) {
+	    //未指定名称，针对lxc-autostart,lxc-unshare使用argv待解析的第一个参数做为name
 		if (args->argv) {
 			args->name = argv[optind];
 			optind++;
@@ -284,15 +311,18 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 		}
 
 		if (!args->name) {
+		    //未给定名称，报错
 			lxc_error(args, "No container name specified");
 			return -1;
 		}
 	}
 
+	//执行参数检查
 	if (args->checker)
 		ret = args->checker(args);
 
 error:
+    //解析出错检查
 	if (ret)
 		lxc_error(args, "could not parse command line");
 

@@ -74,7 +74,7 @@ struct lxc_handler {
 	 * the "clone_flags" handler field in case namespace inheritance is
 	 * requested.
 	 */
-	int nsfd[LXC_NS_MAX];
+	int nsfd[LXC_NS_MAX];//各namespace类型对应的fd
 
 	/* Abstract unix domain SOCK_DGRAM socketpair to pass arbitrary data
 	 * between child and parent.
@@ -94,7 +94,7 @@ struct lxc_handler {
 	const char *lxcpath;
 
 	/* Whether the container's startup process euid is 0. */
-	bool am_root;
+	bool am_root;//是否root用户
 
 	/* Indicates whether should we close std{in,out,err} on start. */
 	bool daemonize;

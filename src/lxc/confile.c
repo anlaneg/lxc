@@ -167,6 +167,7 @@ lxc_config_define(uts_name);
 lxc_config_define(sysctl);
 lxc_config_define(proc);
 
+//记录有效的配置项
 static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.arch",                      set_config_personality,                 get_config_personality,                 clr_config_personality,               },
 	{ "lxc.apparmor.profile",          set_config_apparmor_profile,            get_config_apparmor_profile,            clr_config_apparmor_profile,          },
@@ -266,8 +267,10 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.proc",                      set_config_proc,                        get_config_proc,                        clr_config_proc,                      },
 };
 
+//配置项表数目
 static const size_t config_jump_table_size = sizeof(config_jump_table) / sizeof(struct lxc_config_t);
 
+//通过key查找对应的有效可配置项
 struct lxc_config_t *lxc_get_config(const char *key)
 {
 	size_t i;
@@ -282,6 +285,7 @@ struct lxc_config_t *lxc_get_config(const char *key)
 static int set_config_net(const char *key, const char *value,
 			  struct lxc_conf *lxc_conf, void *data)
 {
+    //net配置value不能为空
 	if (!lxc_config_value_empty(value)) {
 		ERROR("lxc.net must not have a value");
 		return -1;
@@ -534,18 +538,21 @@ static int set_config_net_ipvlan_isolation(const char *key, const char *value,
 	return lxc_ipvlan_isolation_to_flag(&netdev->priv.ipvlan_attr.isolation, value);
 }
 
+//设置netdev的hwaddr
 static int set_config_net_hwaddr(const char *key, const char *value,
 				 struct lxc_conf *lxc_conf, void *data)
 {
 	struct lxc_netdev *netdev = data;
 	char *new_value;
 
+	//配置为空，指明netdev的hwaddr为NULL
 	if (lxc_config_value_empty(value))
 		return clr_config_net_hwaddr(key, lxc_conf, data);
 
 	if (!netdev)
 		return -1;
 
+	//制作复本失败
 	new_value = strdup(value);
 	if (!new_value)
 		return -1;
@@ -596,6 +603,7 @@ static int set_config_net_mtu(const char *key, const char *value,
 	return set_config_string_item(&netdev->mtu, value);
 }
 
+//配置netdev上的ipv4地址
 static int set_config_net_ipv4_address(const char *key, const char *value,
 				       struct lxc_conf *lxc_conf, void *data)
 {
@@ -606,6 +614,7 @@ static int set_config_net_ipv4_address(const char *key, const char *value,
 	char *cursor, *slash;
 	char *addr = NULL, *bcast = NULL, *prefix = NULL;
 
+	//未配置值，直接清除掉ipv4地址
 	if (lxc_config_value_empty(value))
 		return clr_config_net_ipv4_address(key, lxc_conf, data);
 
@@ -633,6 +642,7 @@ static int set_config_net_ipv4_address(const char *key, const char *value,
 		return -1;
 	}
 
+	//空格后的是广播地址
 	cursor = strstr(addr, " ");
 	if (cursor) {
 		*cursor = '\0';
@@ -693,6 +703,7 @@ static int set_config_net_ipv4_address(const char *key, const char *value,
 	return 0;
 }
 
+//netdev设备的gateway地址设置
 static int set_config_net_ipv4_gateway(const char *key, const char *value,
 				       struct lxc_conf *lxc_conf, void *data)
 {
@@ -997,17 +1008,19 @@ static int set_config_net_script_down(const char *key, const char *value,
 	return set_config_string_item(&netdev->downscript, value);
 }
 
-static int add_hook(struct lxc_conf *lxc_conf, int which, char *hook)
+static int add_hook(struct lxc_conf *lxc_conf, int which/*hook点位置*/, char *hook)
 {
 	struct lxc_list *hooklist;
 
+	//申请hooklist
 	hooklist = malloc(sizeof(*hooklist));
 	if (!hooklist) {
 		free(hook);
 		return -1;
 	}
 
-	hooklist->elem = hook;
+	hooklist->elem = hook;/*hook名称*/
+	//将hooklist添加到hooklist中
 	lxc_list_add_tail(&lxc_conf->hooks[which], hooklist);
 
 	return 0;
@@ -1138,10 +1151,12 @@ static int set_config_hooks(const char *key, const char *value,
 		return -1;
 	}
 
+	//hook点名称
 	copy = strdup(value);
 	if (!copy)
 		return -1;
 
+	//添加到指定hook点
 	if (strcmp(key + 9, "pre-start") == 0)
 		return add_hook(lxc_conf, LXCHOOK_PRESTART, copy);
 	else if (strcmp(key + 9, "start-host") == 0)
@@ -2389,8 +2404,10 @@ static void update_hwaddr(const char *line)
 {
 	char *p;
 
+	//跳过左侧空字符
 	line += lxc_char_left_gc(line, strlen(line));
 	if (line[0] == '#')
+	    //跳过注释行
 		return;
 
 	if (!lxc_config_net_is_hwaddr(line))
@@ -2719,9 +2736,10 @@ static int set_config_namespace_share(const char *key, const char *value,
 
 struct parse_line_conf {
 	struct lxc_conf *conf;
-	bool from_include;
+	bool from_include;//是否来自include
 };
 
+//解析每个配置
 static int parse_line(char *buffer, void *data)
 {
 	char *dot, *key, *line, *linep, *value;
@@ -2742,6 +2760,7 @@ static int parse_line(char *buffer, void *data)
 	 */
 	linep = line = strdup(dup);
 	if (!line)
+	    //复制失败，退出
 		return -1;
 
 	if (!plc->from_include) {
@@ -2757,6 +2776,7 @@ static int parse_line(char *buffer, void *data)
 
 	/* ignore comments */
 	if (line[0] == '#')
+	    //跳过注释行
 		goto on_error;
 
 	/* martian option - don't add it to the config itself */
@@ -2790,12 +2810,14 @@ static int parse_line(char *buffer, void *data)
 		}
 	}
 
+	//查询key配置是否为合法的配置项
 	config = lxc_get_config(key);
 	if (!config) {
 		ERROR("Unknown configuration key \"%s\"", key);
 		goto on_error;
 	}
 
+	//设置配置的key,value
 	ret = config->set(key, value, plc->conf, NULL);
 
 on_error:
@@ -2872,7 +2894,8 @@ on_error:
 	return new;
 }
 
-int lxc_config_read(const char *file, struct lxc_conf *conf, bool from_include)
+//加载配置文件
+int lxc_config_read(const char *file/*配置文件的名称*/, struct lxc_conf *conf, bool from_include)
 {
 	struct parse_line_conf c;
 
@@ -2881,8 +2904,10 @@ int lxc_config_read(const char *file, struct lxc_conf *conf, bool from_include)
 
 	/* Catch only the top level config file name in the structure. */
 	if (!conf->rcfile)
+	    /*如果未指定rcfile,则使用file做为rcfile*/
 		conf->rcfile = strdup(file);
 
+	//针对每行配置文件，执行parse_line执行
 	return lxc_file_for_each_line_mmap(file, parse_line, &c);
 }
 
@@ -3838,6 +3863,7 @@ static int get_config_uts_name(const char *key, char *retv, int inlen,
 	    c->utsname ? c->utsname->nodename : NULL);
 }
 
+//获取指定hook点的hook名称
 static int get_config_hooks(const char *key, char *retv, int inlen,
 			    struct lxc_conf *c, void *data)
 {
@@ -4520,6 +4546,7 @@ static inline int clr_config_uts_name(const char *key, struct lxc_conf *c,
 	return 0;
 }
 
+//清空指定hook点的所有hook名称
 static inline int clr_config_hooks(const char *key, struct lxc_conf *c,
 				   void *data)
 {
@@ -5169,6 +5196,7 @@ static int clr_config_net_script_down(const char *key,
 	return 0;
 }
 
+//清楚对netdev的hwaddr配置
 static int clr_config_net_hwaddr(const char *key, struct lxc_conf *lxc_conf,
 				 void *data)
 {
@@ -5654,6 +5682,7 @@ static int get_config_net_script_down(const char *key, char *retv, int inlen,
 	return fulllen;
 }
 
+//获取netdev的hwaddr
 static int get_config_net_hwaddr(const char *key, char *retv, int inlen,
 				 struct lxc_conf *c, void *data)
 {

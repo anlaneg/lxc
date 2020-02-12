@@ -532,6 +532,7 @@ int lxc_pclose(struct lxc_popen_FILE *fp)
 	return wstatus;
 }
 
+//读取seed(由pid及time共同构成）
 int randseed(bool srand_it)
 {
 	FILE *f;
@@ -1376,9 +1377,12 @@ out:
 	return bret;
 }
 
+//打开指定进程的ns文件
+//例如：/proc/16/ns/net
 int lxc_preserve_ns(const int pid, const char *ns)
 {
 	int ret;
+	//构造ns对应的文件路径
 /* 5 /proc + 21 /int_as_str + 3 /ns + 20 /NS_NAME + 1 \0 */
 #define __NS_PATH_LEN 50
 	char path[__NS_PATH_LEN];
@@ -1395,6 +1399,7 @@ int lxc_preserve_ns(const int pid, const char *ns)
 		return -1;
 	}
 
+	//打开此文件
 	return open(path, O_RDONLY | O_CLOEXEC);
 }
 
