@@ -158,5 +158,8 @@ patches
 tags
 TAGS
 
+.cproject
+.project
+.settings/
 doc/api/doxygen_sqlite3.db
 doc/api/*.tmp
