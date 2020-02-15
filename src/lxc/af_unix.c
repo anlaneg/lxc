@@ -26,6 +26,7 @@
 
 lxc_log_define(af_unix, lxc);
 
+//构造unix地址
 static ssize_t lxc_abstract_unix_set_sockaddr(struct sockaddr_un *addr,
 				const char *path)
 {
@@ -54,6 +55,7 @@ static ssize_t lxc_abstract_unix_set_sockaddr(struct sockaddr_un *addr,
 	return len;
 }
 
+//打开af_unix,如果path未指定，则直接返回fd,否则完成服务端bind及监听
 int lxc_abstract_unix_open(const char *path, int type, int flags)
 {
 	int fd, ret;
@@ -65,6 +67,7 @@ int lxc_abstract_unix_open(const char *path, int type, int flags)
 		return -1;
 
 	if (!path)
+	    //未指定fd时，直接返回fd
 		return fd;
 
 	len = lxc_abstract_unix_set_sockaddr(&addr, path);
@@ -75,6 +78,7 @@ int lxc_abstract_unix_open(const char *path, int type, int flags)
 		return -1;
 	}
 
+	//绑定并监听
 	ret = bind(fd, (struct sockaddr *)&addr,
 		   offsetof(struct sockaddr_un, sun_path) + len + 1);
 	if (ret < 0) {

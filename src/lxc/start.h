@@ -63,13 +63,13 @@ struct lxc_handler {
 	int state_socket_pair[2];
 
 	/* Socketpair to synchronize processes during container creation. */
-	int sync_sock[2];
+	int sync_sock[2];//同步用soket
 
 	/* Pointer to the name of the container. Do not free! */
-	const char *name;
+	const char *name;//容器名称
 
 	/* Pointer to the path the container. Do not free! */
-	const char *lxcpath;
+	const char *lxcpath;//配置文件路径
 
 	/* Whether the container's startup process euid is 0. */
 	bool am_root;//是否root用户
@@ -78,7 +78,7 @@ struct lxc_handler {
 	bool daemonize;
 
 	/* The child's pid. */
-	pid_t pid;
+	pid_t pid;//容器的pid
 
 	/* The child's pidfd. */
 	int pidfd;
@@ -98,7 +98,7 @@ struct lxc_handler {
 	sigset_t oldmask;
 
 	/* The container's in-memory configuration. */
-	struct lxc_conf *conf;
+	struct lxc_conf *conf;//容器配置情况
 
 	/* A set of operations to be performed at various stages of the
 	 * container's life.
@@ -132,7 +132,9 @@ struct execute_args {
 };
 
 struct lxc_operations {
+    //容器启动用回调
 	int (*start)(struct lxc_handler *, void *);
+	//容器启动后回调
 	int (*post_start)(struct lxc_handler *, void *);
 };
 

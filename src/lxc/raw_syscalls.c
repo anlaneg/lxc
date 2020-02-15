@@ -104,6 +104,7 @@ __returns_twice pid_t lxc_raw_clone(unsigned long flags, int *pidfd)
 #endif
 }
 
+//产生子进程，并执行fn函数
 pid_t lxc_raw_clone_cb(int (*fn)(void *), void *args, unsigned long flags,
 		       int *pidfd)
 {

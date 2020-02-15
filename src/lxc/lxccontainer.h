@@ -65,7 +65,7 @@ struct lxc_container {
 	 * \private
 	 * File to store pid.
 	 */
-	char *pidfile;
+	char *pidfile;//pid文件名称
 
 	/*!
 	 * \private

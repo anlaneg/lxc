@@ -269,6 +269,7 @@ char *get_rundir()
 	return rundir;
 }
 
+//等待子进程退出
 int wait_for_pid(pid_t pid)
 {
 	int status, ret;
@@ -400,15 +401,18 @@ struct lxc_popen_FILE *lxc_popen(const char *command)
 	pid_t child_pid;
 	struct lxc_popen_FILE *fp = NULL;
 
+	//生成pipe
 	ret = pipe2(pipe_fds, O_CLOEXEC);
 	if (ret < 0)
 		return NULL;
 
+	//产生子进程
 	child_pid = fork();
 	if (child_pid < 0)
 		goto on_error;
 
 	if (!child_pid) {
+	    //子进程
 		sigset_t mask;
 
 		close(pipe_fds[0]);
@@ -437,11 +441,13 @@ struct lxc_popen_FILE *lxc_popen(const char *command)
 		if (ret < 0)
 			_exit(EXIT_FAILURE);
 
+		//放通所有sigmask
 		ret = pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 		if (ret < 0)
 			_exit(EXIT_FAILURE);
 
 		/* check if /bin/sh exist, otherwise try Android location /system/bin/sh */
+		//通过shell执行此脚本
 		if (file_exists("/bin/sh"))
 			execl("/bin/sh", "sh", "-c", command, (char *)NULL);
 		else
@@ -450,6 +456,7 @@ struct lxc_popen_FILE *lxc_popen(const char *command)
 		_exit(127);
 	}
 
+	//生成标准错误输出，标准输出对应的FILE
 	close(pipe_fds[1]);
 	pipe_fds[1] = -1;
 
@@ -1268,6 +1275,7 @@ domount:
 	return 1;
 }
 
+//打开null设备
 int open_devnull(void)
 {
 	int fd = open("/dev/null", O_RDWR);
@@ -1383,6 +1391,7 @@ int lxc_preserve_ns(const int pid, const char *ns)
 	return open(path, O_RDONLY | O_CLOEXEC);
 }
 
+//按参数切换uid及gid
 bool lxc_switch_uid_gid(uid_t uid, gid_t gid)
 {
 	int ret = 0;

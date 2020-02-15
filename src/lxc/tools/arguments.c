@@ -350,6 +350,7 @@ bool lxc_setup_shared_ns(struct lxc_arguments *args, struct lxc_container *c)
 		else
 			continue;
 
+		//设置key的配置项
 		if (!c->set_config_item(c, key, value)) {
 			lxc_error(args, "Failed to set \"%s = %s\"", key, value);
 			return false;

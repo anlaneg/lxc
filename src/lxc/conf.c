@@ -286,18 +286,21 @@ static struct limit_opt limit_opt[] = {
 #endif
 };
 
+//运行buffer对应的shell命令
 static int run_buffer(char *buffer)
 {
 	__do_free char *output = NULL;
 	int fd, ret;
 	struct lxc_popen_FILE *f;
 
+	//通过子进程运行脚本
 	f = lxc_popen(buffer);
 	if (!f) {
 		SYSERROR("Failed to popen() %s", buffer);
 		return -1;
 	}
 
+	//生成output缓存区
 	output = malloc(LXC_LOG_BUFFER_SIZE);
 	if (!output) {
 		ERROR("Failed to allocate memory for %s", buffer);
@@ -312,6 +315,7 @@ static int run_buffer(char *buffer)
 		return -1;
 	}
 
+	//自fd中读取命令行执行程序的输出
 	for (int i = 0; i < 10; i++) {
 		ssize_t bytes_read;
 
@@ -325,6 +329,7 @@ static int run_buffer(char *buffer)
 		break;
 	}
 
+	//等待子进程运行完成
 	ret = lxc_pclose(f);
 	if (ret == -1) {
 		SYSERROR("Script exited with error");
@@ -340,9 +345,10 @@ static int run_buffer(char *buffer)
 	return 0;
 }
 
+//构造脚本参数及环境变量，并运行它
 int run_script_argv(const char *name, unsigned int hook_version,
 		    const char *section, const char *script/*脚本名称*/,
-		    const char *hookname, char **argv)
+		    const char *hookname, char **argv/*脚本参数*/)
 {
 	__do_free char *buffer = NULL;
 	int buf_pos, i, ret;
@@ -386,6 +392,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 		return -ENOMEM;
 
 	if (hook_version == 0)
+	    //版本为0时，需要指定hookname,section
 		buf_pos = snprintf(buffer, size, "exec %s %s %s %s", script, name, section, hookname);
 	else
 		buf_pos = snprintf(buffer, size, "exec %s", script);
@@ -395,6 +402,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 	}
 
 	if (hook_version == 1) {
+	    //记录hook名称等环境变量
 		ret = setenv("LXC_HOOK_TYPE", hookname, 1);
 		if (ret < 0) {
 			SYSERROR("Failed to set environment variable: "
@@ -403,6 +411,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 		}
 		TRACE("Set environment variable: LXC_HOOK_TYPE=%s", hookname);
 
+		//记录section名称
 		ret = setenv("LXC_HOOK_SECTION", section, 1);
 		if (ret < 0) {
 			SYSERROR("Failed to set environment variable: "
@@ -417,6 +426,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 			if (!argv || !argv[0])
 				return -1;
 
+			//指明netdev的类型
 			ret = setenv("LXC_NET_TYPE", argv[0], 1);
 			if (ret < 0) {
 				SYSERROR("Failed to set environment variable: "
@@ -427,6 +437,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 
 			parent = argv[1] ? argv[1] : "";
 
+			//macvlan类型专门的环境变量
 			if (strcmp(argv[0], "macvlan") == 0) {
 				ret = setenv("LXC_NET_PARENT", parent, 1);
 				if (ret < 0) {
@@ -465,6 +476,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 		}
 	}
 
+	//传入脚本对应的参数
 	for (i = 0; argv && argv[i]; i++) {
 		size_t len = size - buf_pos;
 
@@ -476,6 +488,7 @@ int run_script_argv(const char *name, unsigned int hook_version,
 		buf_pos += ret;
 	}
 
+	//执行shell命令行
 	return run_buffer(buffer);
 }
 
@@ -3575,6 +3588,7 @@ int lxc_setup(struct lxc_handler *handler)
 			return -1;
 		}
 
+		//知会父进程接口的名称及ifindex的映射关系
 		ret = lxc_network_send_name_and_ifindex_to_parent(handler);
 		if (ret < 0) {
 			ERROR("Failed to send network device names and ifindices to parent");
@@ -3757,25 +3771,29 @@ int lxc_setup(struct lxc_handler *handler)
 	return 0;
 }
 
+//运行指定hookname对应的钩子点脚本
 int run_lxc_hooks(const char *name, char *hookname, struct lxc_conf *conf,
 		  char *argv[])
 {
 	struct lxc_list *it;
 	int which;
 
+	//查询出当前要执行的hook点名称
 	for (which = 0; which < NUM_LXC_HOOKS; which ++) {
 		if (strcmp(hookname, lxchook_names[which]) == 0)
 			break;
 	}
 
+	//未找到指定的hook点
 	if (which >= NUM_LXC_HOOKS)
 		return -1;
 
+	//遍历所有指定hook，执行相应的脚本
 	lxc_list_for_each (it, &conf->hooks[which]) {
 		int ret;
 		char *hook = it->elem;
 
-		ret = run_script_argv(name, conf->hooks_version, "lxc", hook,
+		ret = run_script_argv(name, conf->hooks_version, "lxc", hook/*脚本名称*/,
 				      hookname, argv);
 		if (ret < 0)
 			return -1;

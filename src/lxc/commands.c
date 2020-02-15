@@ -1476,16 +1476,19 @@ static int lxc_cmd_accept(int fd, uint32_t events, void *data,
 	return ret;
 }
 
+//构造cmd socket
 int lxc_cmd_init(const char *name, const char *lxcpath, const char *suffix)
 {
 	__do_close_prot_errno int fd = -EBADF;
 	int ret;
 	char path[LXC_AUDS_ADDR_LEN] = {0};
 
+	//构造socket路径
 	ret = lxc_make_abstract_socket_name(path, sizeof(path), name, lxcpath, NULL, suffix);
 	if (ret < 0)
 		return -1;
 
+	//监听af_unix server
 	fd = lxc_abstract_unix_open(path, SOCK_STREAM, 0);
 	if (fd < 0) {
 		SYSERROR("Failed to create command socket %s", &path[1]);
@@ -1495,6 +1498,7 @@ int lxc_cmd_init(const char *name, const char *lxcpath, const char *suffix)
 		return -1;
 	}
 
+	//设置exec时clone
 	ret = fcntl(fd, F_SETFD, FD_CLOEXEC);
 	if (ret < 0) {
 		SYSERROR("Failed to set FD_CLOEXEC on command socket file descriptor");

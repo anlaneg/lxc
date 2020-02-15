@@ -724,6 +724,7 @@ static bool do_lxcapi_wait(struct lxc_container *c, const char *state,
 
 WRAP_API_2(bool, lxcapi_wait, const char *, int)
 
+//检查当前进程是否为单线程程序
 static bool am_single_threaded(void)
 {
 	DIR *dir;
@@ -767,6 +768,7 @@ static void push_arg(char ***argp, char *arg, int *nargs)
 	argv[*nargs] = NULL;
 }
 
+//构造命令行参数
 static char **split_init_cmd(const char *incmd)
 {
 	__do_free char *copy = NULL;
@@ -777,12 +779,14 @@ static char **split_init_cmd(const char *incmd)
 	if (!incmd)
 		return NULL;
 
+	//制作incmd的副本
 	copy = must_copy_string(incmd);
 
 	do {
 		argv = malloc(sizeof(char *));
 	} while (!argv);
 
+	//遍历命令行字符串，将每个参数push到argv中
 	argv[0] = NULL;
 	lxc_iterate_parts (p, copy, " ")
 		push_arg(&argv, p, &nargs);
@@ -827,6 +831,7 @@ again:
 	return state;
 }
 
+//等待子进程pid退出
 static bool wait_on_daemonized_start(struct lxc_handler *handler, int pid)
 {
 	int ret, state;
@@ -919,6 +924,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	if (!handler)
 		return false;
 
+	//构造命令行参数
 	if (!argv) {
 		if (useinit && conf->execute_cmd)
 			argv = init_cmd = split_init_cmd(conf->execute_cmd);
@@ -947,6 +953,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 
 		pid_first = fork();
 		if (pid_first < 0) {
+		    //首次fork失败，退出
 			free_init_cmd(init_cmd);
 			lxc_free_handler(handler);
 			return false;
@@ -954,6 +961,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 
 		/* first parent */
 		if (pid_first != 0) {
+		    //首次fork后，等待子进程退出（来通知其已开始运行）
 			/* Set to NULL because we don't want father unlink
 			 * the PID file, child will do the free and unlink.
 			 */
@@ -977,6 +985,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		 */
 		ret = snprintf(title, sizeof(title), "[lxc monitor] %s %s", c->config_path, c->name);
 		if (ret > 0) {
+		    //设置进程名称
 			ret = setproctitle(title);
 			if (ret < 0)
 				INFO("Failed to set process title to %s", title);
@@ -990,12 +999,14 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		 */
 		pid_second = fork();
 		if (pid_second < 0) {
+		    //第二次fork失败
 			SYSERROR("Failed to fork first child process");
 			_exit(EXIT_FAILURE);
 		}
 
 		/* second parent */
 		if (pid_second != 0) {
+		    //send parent直接退出
 			free_init_cmd(init_cmd);
 			lxc_free_handler(handler);
 			_exit(EXIT_SUCCESS);
@@ -1030,6 +1041,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		if (ret < 0)
 			TRACE("Process %d is already process group leader", lxc_raw_getpid());
 	} else if (!am_single_threaded()) {
+	    /*如果当前进程是多线程的，则不能置为非daemon方式*/
 		ERROR("Cannot start non-daemonized container when threaded");
 		free_init_cmd(init_cmd);
 		lxc_free_handler(handler);
@@ -1071,6 +1083,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		}
 	}
 
+	//置reboot状态
 	conf->reboot = REBOOT_NONE;
 
 	/* Unshare the mount namespace if requested */
@@ -1117,7 +1130,8 @@ reboot:
 		ret = lxc_execute(c->name, argv, 1, handler, c->config_path,
 				  c->daemonize, &c->error_num);
 	else
-		ret = lxc_start(c->name, argv, handler, c->config_path,
+	    //启动容器
+		ret = lxc_start(c->name, argv/*命令行参数*/, handler, c->config_path,
 				c->daemonize, &c->error_num);
 
 	if (conf->reboot == REBOOT_REQ) {

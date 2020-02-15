@@ -78,6 +78,7 @@ int lxc_cmd_sock_get_state(const char *name, const char *lxcpath,
 	return lxc_cmd_sock_rcv_state(state_client_fd, timeout);
 }
 
+//构造socket name
 int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 				  const char *lxcname,
 				  const char *lxcpath,
@@ -118,6 +119,7 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 	}
 
 	if (!lxcpath) {
+	    //如未指定lxcpath，则自配置中获取
 		lxcpath = lxc_global_config_value("lxc.lxcpath");
 		if (!lxcpath) {
 			ERROR("Failed to allocate memory");
@@ -125,14 +127,19 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 		}
 	}
 
+	//填充路径
 	ret = snprintf(offset, len, "%s/%s/%s", lxcpath, name, suffix);
 	if (ret < 0) {
 		ERROR("Failed to create abstract socket name");
 		return -1;
 	}
+
+	//如果格式化后长度不超过buffer，则直接返回
 	if (ret < len)
 		return 0;
 
+	//长度超过len时，将lxcpath+name这部分通过sha-1全部生成hashcode
+	//并重新生成另一种较短格式的路径
 	/* ret >= len; lxcpath or name is too long.  hash both */
 	tmplen = strlen(name) + strlen(lxcpath) + 2;
 	tmppath = must_realloc(NULL, tmplen);

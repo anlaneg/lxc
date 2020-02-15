@@ -70,6 +70,7 @@ extern int lxc_raw_execveat(int dirfd, const char *pathname, char *const argv[],
  */
 static inline pid_t lxc_raw_getpid(void)
 {
+    //调用pid获得当前进程id
 	return (pid_t)syscall(SYS_getpid);
 }
 

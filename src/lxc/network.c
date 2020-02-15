@@ -956,19 +956,23 @@ static  instantiate_cb netdev_conf[LXC_NET_MAXCONFTYPE + 1] = {
 	[LXC_NET_NONE]    = instantiate_none,
 };
 
+//容器内部veth处理
 static int instantiate_ns_veth(struct lxc_netdev *netdev)
 {
 	char current_ifname[IFNAMSIZ];
 
+	//取容器内部netdev对应的ifindex
 	netdev->ifindex = if_nametoindex(netdev->created_name);
 	if (!netdev->ifindex)
 		return log_error_errno(-1,
 				       errno, "Failed to retrieve ifindex for network device with name %s",
 				       netdev->created_name);
 
+	//为设备设置名称
 	if (netdev->name[0] == '\0')
 		(void)strlcpy(netdev->name, "eth%d", IFNAMSIZ);
 
+	//如果两者名称不一致，则将create_name名称重命名为name
 	if (strcmp(netdev->created_name, netdev->name) != 0) {
 		int ret;
 
@@ -982,6 +986,7 @@ static int instantiate_ns_veth(struct lxc_netdev *netdev)
 		TRACE("Renamed network device from \"%s\" to \"%s\"", netdev->created_name, netdev->name);
 	}
 
+	//更新接口名称
 	/*
 	 * Re-read the name of the interface because its name has changed and
 	 * would be automatically allocated by the system
@@ -1001,6 +1006,7 @@ static int instantiate_ns_veth(struct lxc_netdev *netdev)
 	return 0;
 }
 
+//更新netdev的ifindex
 static int __instantiate_common(struct lxc_netdev *netdev)
 {
 	netdev->ifindex = if_nametoindex(netdev->name);
@@ -1042,6 +1048,7 @@ static int instantiate_ns_none(struct lxc_netdev *netdev)
 	return 0;
 }
 
+//容器内部netdev处理
 static  instantiate_ns_cb netdev_ns_conf[LXC_NET_MAXCONFTYPE + 1] = {
 	[LXC_NET_VETH]    = instantiate_ns_veth,
 	[LXC_NET_MACVLAN] = instantiate_ns_macvlan,
@@ -1183,6 +1190,7 @@ static int shutdown_none(struct lxc_handler *handler, struct lxc_netdev *netdev)
 	return 0;
 }
 
+//各类型接口移除时解配置回调
 static  instantiate_cb netdev_deconf[LXC_NET_MAXCONFTYPE + 1] = {
 	[LXC_NET_VETH]    = shutdown_veth,
 	[LXC_NET_MACVLAN] = shutdown_macvlan,
@@ -1218,6 +1226,7 @@ static int lxc_netdev_move_by_index_fd(int ifindex, int fd, const char *ifname)
 	ifi->ifi_family = AF_UNSPEC;
 	ifi->ifi_index = ifindex;
 
+	//将ifindex存放到fd对应的namespace
 	if (nla_put_u32(nlmsg, IFLA_NET_NS_FD, fd))
 		goto out;
 
@@ -2481,6 +2490,7 @@ int lxc_ipv4_addr_get(int ifindex, struct in_addr **res)
 	return ip_addr_get(AF_INET, ifindex, (void **)res);
 }
 
+//添加gateway路由
 static int ip_gateway_add(int family, int ifindex, void *gw)
 {
 	int addrlen, err;
@@ -2803,23 +2813,28 @@ int lxc_find_gateway_addresses(struct lxc_handler *handler)
 	lxc_list_for_each(iterator, network) {
 		netdev = iterator->elem;
 
+		//针考虑auto gateway情况
 		if (!netdev->ipv4_gateway_auto && !netdev->ipv6_gateway_auto)
 			continue;
 
+		//仅veth,macvlan支持auto gateway
 		if (netdev->type != LXC_NET_VETH && netdev->type != LXC_NET_MACVLAN) {
 			ERROR("Automatic gateway detection is only supported for veth and macvlan");
 			return -1;
 		}
 
+		//需要配置link
 		if (netdev->link[0] == '\0') {
 			ERROR("Automatic gateway detection needs a link interface");
 			return -1;
 		}
 
+		//取link的ifindex
 		link_index = if_nametoindex(netdev->link);
 		if (!link_index)
 			return -EINVAL;
 
+		//自link中取其对应的地址做为gateway地址
 		if (netdev->ipv4_gateway_auto) {
 			if (lxc_ipv4_addr_get(link_index, &netdev->ipv4_gateway)) {
 				ERROR("Failed to automatically find ipv4 gateway address from link interface \"%s\"",
@@ -3125,6 +3140,7 @@ bool lxc_delete_network_unpriv(struct lxc_handler *handler)
 		return false;
 	}
 
+	//构造net namespace的/proc文件路径
 	ret = snprintf(netns_path, sizeof(netns_path), "/proc/%d/fd/%d",
 		       lxc_raw_getpid(), handler->nsfd[LXC_NS_NET]);
 	if (ret < 0 || ret >= sizeof(netns_path))
@@ -3152,10 +3168,12 @@ bool lxc_delete_network_unpriv(struct lxc_handler *handler)
 				      "initial name \"%s\"",
 				      netdev->ifindex, netdev->link);
 
+			//移除phys类型netdev
 			ret = netdev_deconf[netdev->type](handler, netdev);
 			goto clear_ifindices;
 		}
 
+		//移除相应类型的netdev
 		ret = netdev_deconf[netdev->type](handler, netdev);
 		if (ret < 0)
 			WARN("Failed to deconfigure network device");
@@ -3615,12 +3633,14 @@ clear_ifindices:
 	return true;
 }
 
+//是否空的network
 int lxc_requests_empty_network(struct lxc_handler *handler)
 {
 	struct lxc_list *network = &handler->conf->network;
 	struct lxc_list *iterator;
 	bool found_none = false, found_nic = false;
 
+	//如果无network则直接返回
 	if (lxc_list_empty(network))
 		return 0;
 
@@ -3632,6 +3652,7 @@ int lxc_requests_empty_network(struct lxc_handler *handler)
 		else
 			found_nic = true;
 	}
+	/*如果存在none netdev,并且没有发现nic,则返回1*/
 	if (found_none && !found_nic)
 		return 1;
 	return 0;
@@ -3662,6 +3683,7 @@ int lxc_restore_phys_nics_to_netns(struct lxc_handler *handler)
 		return -1;
 	}
 
+	//更新当前线程的net namespace到netnsfd对应的namespace
 	ret = setns(netnsfd, CLONE_NEWNET);
 	if (ret < 0) {
 		SYSERROR("Failed to enter network namespace");
@@ -3779,12 +3801,14 @@ static int setup_ipv6_addr(struct lxc_list *ip, int ifindex)
 	return 0;
 }
 
+//使接口up,为接口配置ip地址及网关
 static int lxc_network_setup_in_child_namespaces_common(struct lxc_netdev *netdev)
 {
 	int err;
 	char bufinet4[INET_ADDRSTRLEN], bufinet6[INET6_ADDRSTRLEN];
 
 	/* empty network namespace */
+	//使lo接口up
 	if (!netdev->ifindex && netdev->flags & IFF_UP) {
 		err = lxc_netdev_up("lo");
 		if (err) {
@@ -3796,6 +3820,7 @@ static int lxc_network_setup_in_child_namespaces_common(struct lxc_netdev *netde
 
 	/* set a mac address */
 	if (netdev->hwaddr) {
+	    //设置接口mac地址
 		if (setup_hw_addr(netdev->hwaddr, netdev->name)) {
 			ERROR("Failed to setup hw address for network device \"%s\"",
 			      netdev->name);
@@ -3804,6 +3829,7 @@ static int lxc_network_setup_in_child_namespaces_common(struct lxc_netdev *netde
 	}
 
 	/* setup ipv4 addresses on the interface */
+	//为接口配置其ipv4地址
 	if (setup_ipv4_addr(&netdev->ipv4, netdev->ifindex)) {
 		ERROR("Failed to setup ip addresses for network device \"%s\"",
 		      netdev->name);
@@ -3811,6 +3837,7 @@ static int lxc_network_setup_in_child_namespaces_common(struct lxc_netdev *netde
 	}
 
 	/* setup ipv6 addresses on the interface */
+	//为接口配置其ipv6地址
 	if (setup_ipv6_addr(&netdev->ipv6, netdev->ifindex)) {
 		ERROR("Failed to setup ipv6 addresses for network device \"%s\"",
 		      netdev->name);
@@ -3819,6 +3846,7 @@ static int lxc_network_setup_in_child_namespaces_common(struct lxc_netdev *netde
 
 	/* set the network device up */
 	if (netdev->flags & IFF_UP) {
+	    //使接口up
 		err = lxc_netdev_up(netdev->name);
 		if (err) {
 			errno = -err;
@@ -3852,6 +3880,7 @@ static int lxc_network_setup_in_child_namespaces_common(struct lxc_netdev *netde
 
 		/* Setup device route if ipv4_gateway_dev is enabled */
 		if (netdev->ipv4_gateway_dev) {
+		    //添加网关路由
 			err = lxc_ipv4_gateway_add(netdev->ifindex, NULL);
 			if (err < 0) {
 				SYSERROR("Failed to setup ipv4 gateway to network device \"%s\"",
@@ -3954,12 +3983,14 @@ int lxc_setup_network_in_child_namespaces(const struct lxc_conf *conf,
 {
 	struct lxc_list *iterator;
 
+	//在命名空间内，更新netdev
 	lxc_list_for_each (iterator, network) {
 		struct lxc_netdev *netdev = iterator->elem;
 		int ret;
 
 		ret = netdev_ns_conf[netdev->type](netdev);
 		if (!ret)
+		    /*更新接口配置等*/
 			ret = lxc_network_setup_in_child_namespaces_common(netdev);
 		if (ret) {
 			ERROR("Failed to setup netdev");
@@ -4009,6 +4040,7 @@ int lxc_network_recv_from_parent(struct lxc_handler *handler)
 	struct lxc_list *network = &handler->conf->network;
 	int data_sock = handler->data_sock[1];
 
+	//更新容器内的netdev结构体
 	lxc_list_for_each(iterator, network) {
 		int ret;
 		struct lxc_netdev *netdev = iterator->elem;

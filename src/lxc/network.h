@@ -167,8 +167,8 @@ struct lxc_netdev {
 	union netdev_p priv;//私有数据
 	struct lxc_list ipv4;//ipv4地址集
 	struct lxc_list ipv6;//ipv6地址集
-	bool ipv4_gateway_auto;
-	bool ipv4_gateway_dev;
+	bool ipv4_gateway_auto;//支持自动ipv4 gateway
+	bool ipv4_gateway_dev;//支持自动ipv6 gateway
 	struct in_addr *ipv4_gateway;//ipv4的gateway地址
 	bool ipv6_gateway_auto;
 	bool ipv6_gateway_dev;

@@ -51,6 +51,7 @@
 
 /* Define setns() if missing from the C library */
 #ifndef HAVE_SETNS
+//实现setns系统调用
 static inline int setns(int fd, int nstype)
 {
 #ifdef __NR_setns

@@ -122,6 +122,7 @@ static int lxc_try_preserve_ns(const int pid, const char *ns)
 {
 	int fd;
 
+	//取pid对应的ns
 	fd = lxc_preserve_ns(pid, ns);
 	if (fd < 0) {
 		if (errno != ENOENT) {
@@ -664,6 +665,7 @@ void lxc_zero_handler(struct lxc_handler *handler)
 	handler->state_socket_pair[0] = -1;
 	handler->state_socket_pair[1] = -1;
 
+	//初始化同步socket
 	handler->sync_sock[0] = -1;
 	handler->sync_sock[1] = -1;
 }
@@ -708,6 +710,7 @@ struct lxc_handler *lxc_init_handler(const char *name, struct lxc_conf *conf,
 	int i, ret;
 	struct lxc_handler *handler;
 
+	//申请handler空间
 	handler = malloc(sizeof(*handler));
 	if (!handler)
 		return NULL;
@@ -734,6 +737,7 @@ struct lxc_handler *lxc_init_handler(const char *name, struct lxc_conf *conf,
 	for (i = 0; i < LXC_NS_MAX; i++)
 		handler->nsfd[i] = -1;
 
+	//设置容器名称
 	handler->name = name;
 	if (daemonize)
 		handler->transient_pid = lxc_raw_getpid();
@@ -1116,6 +1120,7 @@ void lxc_abort(const char *name, struct lxc_handler *handler)
 	} while (ret > 0);
 }
 
+//子进程入口
 static int do_start(void *data)
 {
 	struct lxc_handler *handler = data;
@@ -1369,6 +1374,7 @@ static int do_start(void *data)
 		goto out_warn_father;
 	}
 
+	//执行start hook点的脚本
 	ret = run_lxc_hooks(handler->name, "start", handler->conf, NULL);
 	if (ret < 0) {
 		ERROR("Failed to run lxc.hook.start for container \"%s\"",
@@ -1399,6 +1405,7 @@ static int do_start(void *data)
 
 	setsid();
 
+	//切换到init_cwd目录
 	if (handler->conf->init_cwd) {
 		ret = chdir(handler->conf->init_cwd);
 		if (ret < 0) {
@@ -1415,11 +1422,12 @@ static int do_start(void *data)
 	/* Reset the environment variables the user requested in a clear
 	 * environment.
 	 */
-	ret = clearenv();
+	ret = clearenv();//清除掉所有env变量
 	/* Don't error out though. */
 	if (ret < 0)
 		SYSERROR("Failed to clear environment.");
 
+	//存入配置的所有环境变量
 	lxc_list_for_each(iterator, &handler->conf->environment) {
 		ret = putenv((char *)iterator->elem);
 		if (ret < 0) {
@@ -1429,6 +1437,7 @@ static int do_start(void *data)
 		}
 	}
 
+	//指定container环境变量
 	ret = putenv("container=lxc");
 	if (ret < 0) {
 		SYSERROR("Failed to set environment variable: container=lxc");
@@ -1648,6 +1657,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	wants_to_map_ids = !lxc_list_empty(id_map);
 
 	for (i = 0; i < LXC_NS_MAX; i++) {
+	    //跳过不需要share的，如果要share，则继承已有的namespace
 		if (!conf->ns_share[i])
 			continue;
 
@@ -1662,6 +1672,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (ret < 0)
 		return -1;
 
+	//创建一组data socket
 	ret = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0,
 			 handler->data_sock);
 	if (ret < 0)
@@ -1673,6 +1684,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (ret < 0)
 		goto out_sync_fini;
 
+	//需要创建net namespace
 	if (handler->ns_clone_flags & CLONE_NEWNET) {
 		ret = lxc_find_gateway_addresses(handler);
 		if (ret) {
@@ -1712,6 +1724,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (share_ns) {
 		pid_t attacher_pid;
 
+		//产生子进程并调用do_share_ns函数
 		attacher_pid = lxc_clone(do_share_ns, handler,
 					 CLONE_VFORK | CLONE_VM | CLONE_FILES, NULL);
 		if (attacher_pid < 0) {
@@ -1725,10 +1738,15 @@ static int lxc_spawn(struct lxc_handler *handler)
 			goto out_delete_net;
 		}
 	} else {
+	    //产生子进程处理do_start
 		handler->pid = lxc_raw_clone_cb(do_start, handler,
 						CLONE_PIDFD | handler->ns_on_clone_flags,
 						&handler->pidfd);
 	}
+
+	//父进程自此开始运行
+
+	//子进程创建失败退出
 	if (handler->pid < 0) {
 		SYSERROR(LXC_CLONE_ERROR);
 		goto out_delete_net;
@@ -1739,6 +1757,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (ret < 0 || ret >= 20)
 		goto out_delete_net;
 
+	//设置子进程环境变量
 	ret = setenv("LXC_PID", pidstr, 1);
 	if (ret < 0)
 		SYSERROR("Failed to set environment variable: LXC_PID=%s", pidstr);
@@ -1747,12 +1766,13 @@ static int lxc_spawn(struct lxc_handler *handler)
 		if (handler->ns_on_clone_flags & ns_info[i].clone_flag)
 			INFO("Cloned %s", ns_info[i].flag_name);
 
-	//为handler打开需要新建的ns
+	//为handler打开需要新建的ns fd
 	if (!lxc_try_preserve_namespaces(handler, handler->ns_on_clone_flags, handler->pid)) {
 		ERROR("Failed to preserve cloned namespaces for lxc.hook.stop");
 		goto out_delete_net;
 	}
 
+	//父进程关闭sync_socket[0]
 	lxc_sync_fini_child(handler);
 
 	if (lxc_abstract_unix_send_fds(handler->data_sock[0], &handler->monitor_status_fd, 1, NULL, 0) < 0) {
@@ -1778,10 +1798,12 @@ static int lxc_spawn(struct lxc_handler *handler)
 		}
 	}
 
+	//通知子进程开始startup阶段
 	ret = lxc_sync_wake_child(handler, LXC_SYNC_STARTUP);
 	if (ret < 0)
 		goto out_delete_net;
 
+	//等待子进程通知要求进入configure阶段
 	ret = lxc_sync_wait_child(handler, LXC_SYNC_CONFIGURE);
 	if (ret < 0)
 		goto out_delete_net;
@@ -1853,6 +1875,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	/* Tell the child to continue its initialization. We'll get
 	 * LXC_SYNC_CGROUP when it is ready for us to setup cgroups.
 	 */
+	//知会子进程开始处理 post_configure阶段，并等待开始下一步
 	ret = lxc_sync_barrier_child(handler, LXC_SYNC_POST_CONFIGURE);
 	if (ret < 0)
 		goto out_delete_net;
@@ -1865,6 +1888,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		}
 	}
 
+	//知会子进程开始处理cgroup_unshare阶段，并等待下一步
 	ret = lxc_sync_barrier_child(handler, LXC_SYNC_CGROUP_UNSHARE);
 	if (ret < 0)
 		goto out_delete_net;
@@ -2116,6 +2140,7 @@ struct start_args {
 	char *const *argv;
 };
 
+//执行arg对应的命令
 static int start(struct lxc_handler *handler, void* data)
 {
 	struct start_args *arg = data;
@@ -2135,6 +2160,7 @@ static int post_start(struct lxc_handler *handler, void* data)
 	return 0;
 }
 
+//启动操作
 static struct lxc_operations start_ops = {
 	.start = start,
 	.post_start = post_start
@@ -2143,8 +2169,9 @@ static struct lxc_operations start_ops = {
 int lxc_start(const char *name, char *const argv[], struct lxc_handler *handler,
 	      const char *lxcpath, bool daemonize, int *error_num)
 {
+    //启动参数
 	struct start_args start_arg = {
-		.argv = argv,
+		.argv = argv,/*容器要运行的命令参数*/
 	};
 
 	TRACE("Doing lxc_start");

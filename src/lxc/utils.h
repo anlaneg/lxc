@@ -87,6 +87,7 @@ extern int randseed(bool);
 
 /* are we unprivileged with respect to our namespaces */
 inline static bool am_guest_unpriv(void) {
+    //是否为root用户
 	return geteuid() != 0;
 }
 

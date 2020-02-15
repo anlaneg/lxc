@@ -189,6 +189,7 @@ enum {
 	LXC_AUTO_ALL_MASK             = 0x1FF, /* all known settings */
 };
 
+//lxc 各hook点
 enum lxchooks {
 	LXCHOOK_PRESTART,
 	LXCHOOK_PREMOUNT,
@@ -288,6 +289,7 @@ struct lxc_conf {
 
 	struct {
 		unsigned int hooks_version;
+		//各hook点脚本配置情况（节点为脚本名称）
 		struct lxc_list hooks[NUM_LXC_HOOKS];
 	};
 
@@ -302,7 +304,7 @@ struct lxc_conf {
 	bool keyring_disable_session;
 	bool tmp_umount_proc;
 	struct lxc_seccomp seccomp;
-	int maincmd_fd;
+	int maincmd_fd;//cmd对应的socket fd
 	unsigned int autodev;  /* if 1, mount and fill a /dev at start */
 	int autodevtmpfssize; /* size of the /dev tmpfs */
 	int haltsignal; /* signal used to halt container */
@@ -377,11 +379,11 @@ struct lxc_conf {
 	struct {
 		int ns_clone;
 		int ns_keep;
-		char *ns_share[LXC_NS_MAX];
+		char *ns_share[LXC_NS_MAX];//指明哪些namespace需要share
 	};
 
 	/* init working directory */
-	char *init_cwd;
+	char *init_cwd;//init时的工作目录
 
 	/* A list of clients registered to be informed about a container state. */
 	struct lxc_list state_clients;

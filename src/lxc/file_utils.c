@@ -135,6 +135,7 @@ int lxc_read_from_file(const char *filename, void *buf, size_t count)
 	return ret;
 }
 
+//向fd中写入buffer,buffer长度为count,返回write的结果
 ssize_t lxc_write_nointr(int fd, const void *buf, size_t count)
 {
 	ssize_t ret;

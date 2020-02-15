@@ -858,12 +858,14 @@ static char *lxc_secure_rename_in_ns(int pid, char *oldname, char *newname,
 
 	pid_self = lxc_raw_getpid();
 
+	//取当前进程的net namespace
 	ofd = lxc_preserve_ns(pid_self, "net");
 	if (ofd < 0) {
 		usernic_error("Failed opening network namespace path for %d", pid_self);
 		return NULL;
 	}
 
+	//取pid的net namespace
 	fd = lxc_preserve_ns(pid, "net");
 	if (fd < 0) {
 		usernic_error("Failed opening network namespace path for %d", pid);
@@ -876,6 +878,7 @@ static char *lxc_secure_rename_in_ns(int pid, char *oldname, char *newname,
 		goto do_partial_cleanup;
 	}
 
+	//创建新的net namespace
 	ret = setns(fd, CLONE_NEWNET);
 	close(fd);
 	fd = -1;
