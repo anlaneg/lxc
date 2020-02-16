@@ -47,6 +47,7 @@ struct lxc_cmd_rsp {
 
 struct lxc_cmd_rr {
 	struct lxc_cmd_req req;
+	//命令行响应数据
 	struct lxc_cmd_rsp rsp;
 };
 

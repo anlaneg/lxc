@@ -173,7 +173,7 @@ struct lxc_container {
 	 *
 	 * \return \c true on success, else \c false.
 	 */
-	//配置加载
+	//容器配置加载
 	bool (*load_config)(struct lxc_container *c, const char *alt_file);
 
 	/*!
@@ -242,6 +242,7 @@ struct lxc_container {
 	 *
 	 * \note The result is allocated, so the caller must free the result.
 	 */
+	//获取容器配置文件路径
 	char *(*config_file_name)(struct lxc_container *c);
 
 	/*!
@@ -267,6 +268,7 @@ struct lxc_container {
 	 *
 	 * \return \c true on success, else \c false.
 	 */
+	//设置配置项
 	bool (*set_config_item)(struct lxc_container *c, const char *key, const char *value);
 
 	/*!
@@ -278,6 +280,7 @@ struct lxc_container {
 	 *
 	 * \note Container must be stopped and have no dependent snapshots.
 	 */
+	//删除容器
 	bool (*destroy)(struct lxc_container *c);
 
 	/*!
@@ -288,6 +291,7 @@ struct lxc_container {
 	 *
 	 * \return \c true on success, else \c false.
 	 */
+	//保存容器配置
 	bool (*save_config)(struct lxc_container *c, const char *alt_file);
 
 	/*!
@@ -369,6 +373,7 @@ struct lxc_container {
 	 *
 	 * \param c Container.
 	 */
+	//清除容器在内存中的所有配置
 	void (*clear_config)(struct lxc_container *c);
 
 	/*!
@@ -381,6 +386,7 @@ struct lxc_container {
 	 *
 	 * \note Analog of \ref set_config_item.
 	 */
+	//清除指定key的配置
 	bool (*clear_config_item)(struct lxc_container *c, const char *key);
 
 	/*!
@@ -401,6 +407,7 @@ struct lxc_container {
 	 * \note If \p inlen is smaller than required, nothing will be written to \p retv and still return
 	 *  the length of config item value.
 	 */
+	//获得指定key的配置项
 	int (*get_config_item)(struct lxc_container *c, const char *key, char *retv, int inlen);
 
 
@@ -414,6 +421,7 @@ struct lxc_container {
 	 *
 	 * \note Returned string must be freed by the caller.
 	 */
+	//通过cmd获取配置项
 	char* (*get_running_config_item)(struct lxc_container *c, const char *key);
 
 	/*!
@@ -791,6 +799,7 @@ struct lxc_container {
 	 *
 	 * \note Container must be stopped.
 	 */
+	//删除容器及其所有快照
 	bool (*destroy_with_snapshots)(struct lxc_container *c);
 
 	/*!
@@ -1081,7 +1090,7 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 int list_all_containers(const char *lxcpath, char ***names, struct lxc_container ***cret);
 
 struct lxc_log {
-	const char *name;
+	const char *name;//容器名称
 	const char *lxcpath;//使用第一个lxcpath
 	const char *file;//log文件路径
 	const char *level;//log级别

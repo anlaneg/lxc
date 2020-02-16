@@ -206,28 +206,34 @@ int main(int argc, char *argv[])
 	 */
 	/* rcfile is specified in the cli option */
 	if (my_args.rcfile) {
+	    //指定了专门的配置文件
 		rcfile = (char *)my_args.rcfile;
 
+		//创建container对象
 		c = lxc_container_new(my_args.name, lxcpath/*容器配置文件全路径*/);
 		if (!c) {
 			ERROR("Failed to create lxc_container");
 			exit(err);
 		}
 
+		//清除容器已有配置
 		c->clear_config(c);
 
+		//为容器加载指定rcfile的配置
 		if (!c->load_config(c, rcfile)) {
 			ERROR("Failed to load rcfile");
 			lxc_container_put(c);
 			exit(err);
 		}
 
+		//更新容器配置文件
 		c->configfile = strdup(my_args.rcfile);
 		if (!c->configfile) {
 			ERROR("Out of memory setting new config filename");
 			goto out;
 		}
 	} else {
+	    //使用默认配置文件初始化container对象
 		int rc;
 
 		rc = asprintf(&rcfile, "%s/%s/config", lxcpath, my_args.name);
@@ -259,6 +265,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	//如果容器已开始运行，就直接返回
 	if (c->is_running(c)) {
 		ERROR("Container is already running");
 		err = EXIT_SUCCESS;
@@ -270,6 +277,7 @@ int main(int argc, char *argv[])
 	 * unset c->lxc_conf for us and let us not use lxc_config_define_load()
 	 */
 	if (!c->lxc_conf) {
+	    //没有配置，出错
 		ERROR("No container config specified");
 		goto out;
 	}
@@ -277,6 +285,7 @@ int main(int argc, char *argv[])
 	if (!lxc_config_define_load(&defines, c))
 		goto out;
 
+	//没指定配置文件，且args[0]为/sbin/init，则报错
 	if (!rcfile && !strcmp("/sbin/init", args[0])) {
 		ERROR("Executing '/sbin/init' with no configuration file may crash the host");
 		goto out;
@@ -299,12 +308,15 @@ int main(int argc, char *argv[])
 	if (!lxc_setup_shared_ns(&my_args, c))
 		goto out;
 
+	//如果未设置daemon,则指明不采用daemon
 	if (!my_args.daemonize)
 		c->want_daemonize(c, false);
 
+	//如果要求关闭所有fd,则配置关闭所有fd
 	if (my_args.close_all_fds)
 		c->want_close_all_fds(c, true);
 
+	//启动容器
 	if (args == default_args)
 		err = c->start(c, 0, NULL) ? EXIT_SUCCESS : EXIT_FAILURE;
 	else

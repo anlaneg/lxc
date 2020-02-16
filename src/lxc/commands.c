@@ -215,10 +215,12 @@ static int lxc_cmd_send(const char *name, struct lxc_cmd_rr *cmd,
 	__do_close_prot_errno int client_fd = -EBADF;
 	ssize_t ret = -1;
 
+	//生成到name容器的command client
 	client_fd = lxc_cmd_connect(name, lxcpath, hashed_sock_name, "command");
 	if (client_fd < 0)
 		return -1;
 
+	/*发送command请求的资格获取*/
 	ret = lxc_abstract_unix_send_credential(client_fd, &cmd->req,
 						sizeof(cmd->req));
 	if (ret < 0 || (size_t)ret != sizeof(cmd->req))
@@ -230,6 +232,8 @@ static int lxc_cmd_send(const char *name, struct lxc_cmd_rr *cmd,
 		if (ret <= 0)
 			return -1;
 	} else {
+
+	    //向server发送command请求
 		if (cmd->req.datalen <= 0)
 			return move_fd(client_fd);
 
@@ -275,6 +279,7 @@ static int lxc_cmd(const char *name, struct lxc_cmd_rr *cmd, int *stopped,
 
 	*stopped = 0;
 
+	/*发送命令请求*/
 	client_fd = lxc_cmd_send(name, cmd, lxcpath, hashed_sock_name);
 	if (client_fd < 0) {
 		SYSTRACE("Command \"%s\" failed to connect command socket",
@@ -286,6 +291,7 @@ static int lxc_cmd(const char *name, struct lxc_cmd_rr *cmd, int *stopped,
 		return -1;
 	}
 
+	/*读取响应*/
 	ret = lxc_cmd_rsp_recv(client_fd, cmd);
 	if (ret < 0 && errno == ECONNRESET)
 		*stopped = 1;
@@ -547,6 +553,7 @@ int lxc_cmd_get_state(const char *name, const char *lxcpath)
 		.req = { .cmd = LXC_CMD_GET_STATE }
 	};
 
+	//执行cmd
 	ret = lxc_cmd(name, &cmd, &stopped, lxcpath, NULL);
 	if (ret < 0 && stopped)
 		return STOPPED;
@@ -562,6 +569,7 @@ int lxc_cmd_get_state(const char *name, const char *lxcpath)
 	DEBUG("Container \"%s\" is in \"%s\" state", name,
 	      lxc_state2str(PTR_TO_INT(cmd.rsp.data)));
 
+	//返回响应的状态数据
 	return PTR_TO_INT(cmd.rsp.data);
 }
 

@@ -20,11 +20,13 @@ lxc_log_define(cgroup, lxc);
 
 extern struct cgroup_ops *cgfsng_ops_init(struct lxc_conf *conf);
 
+//初始化cgroup
 struct cgroup_ops *cgroup_init(struct lxc_conf *conf)
 {
 	struct cgroup_ops *cgroup_ops;
 
 	if (!conf)
+	    /*无conf，报错*/
 		return log_error_errno(NULL, EINVAL, "No valid conf given");
 
 	cgroup_ops = cgfsng_ops_init(conf);

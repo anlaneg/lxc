@@ -146,6 +146,7 @@ on_error:
 	return ret;
 }
 
+//打开file,针对file中的每一行，调用callback
 int lxc_file_for_each_line(const char *file, lxc_file_cb callback, void *data)
 {
 	FILE *f;
@@ -159,6 +160,7 @@ int lxc_file_for_each_line(const char *file, lxc_file_cb callback, void *data)
 		return -1;
 	}
 
+	//读取f中的每一行，针对每一行，执行callback
 	while (getline(&line, &len, f) != -1) {
 		err = callback(line, data);
 		if (err) {

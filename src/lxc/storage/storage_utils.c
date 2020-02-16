@@ -259,6 +259,7 @@ int is_blktype(struct lxc_storage *b)
 	return 0;
 }
 
+//将rootfs挂载到target位置，使用options进行挂载
 int mount_unknown_fs(const char *rootfs, const char *target,
 		     const char *options)
 {
@@ -284,9 +285,10 @@ int mount_unknown_fs(const char *rootfs, const char *target,
 	    "/proc/filesystems",
 	};
 
+	//查找合适的filesystem,完成block挂载
 	for (i = 0; i < sizeof(fsfile) / sizeof(fsfile[0]); i++) {
 		if (access(fsfile[i], F_OK))
-			continue;
+			continue;//跳过不存在的文件
 
 		ret = lxc_file_for_each_line(fsfile[i], find_fstype_cb, &cbarg);
 		if (ret < 0) {
@@ -308,6 +310,7 @@ int mount_unknown_fs(const char *rootfs, const char *target,
  * the callback system, they can be pulled from there eventually, so we
  * don't need to pollute utils.c with these low level functions
  */
+//查找fstype,并且完成block挂载
 int find_fstype_cb(char *buffer, void *data)
 {
 	struct cbarg {
@@ -322,8 +325,10 @@ int find_fstype_cb(char *buffer, void *data)
 
 	/* we don't try 'nodev' entries */
 	if (strstr(buffer, "nodev"))
+	    /*不考虑nodev的行*/
 		return 0;
 
+	//分析文件系统类型
 	fstype = buffer;
 	fstype += lxc_char_left_gc(fstype, strlen(fstype));
 	fstype[lxc_char_right_gc(fstype, strlen(fstype))] = '\0';
@@ -336,6 +341,7 @@ int find_fstype_cb(char *buffer, void *data)
 		return 0;
 	}
 
+	//完成block挂载
 	if (mount(cbarg->rootfs, cbarg->target, fstype, mntflags, mntdata)) {
 		SYSDEBUG("Failed to mount");
 		free(mntdata);

@@ -1871,6 +1871,7 @@ static void parse_mntopt(char *opt, unsigned long *flags, char **data, size_t si
 
 	/* If '=' is contained in opt, the option must go into data. */
 	if (!strchr(opt, '=')) {
+	    //选项中没有'='号，认为仅是flags,遍历所有已知flags,合入到flags中
 
 		/* If opt is found in mount_opt, set or clear flags.
 		 * Otherwise append it to data. */
@@ -1887,13 +1888,16 @@ static void parse_mntopt(char *opt, unsigned long *flags, char **data, size_t si
 		}
 	}
 
+	/*如果有data,则添加','*/
 	if (strlen(*data))
 		(void)strlcat(*data, ",", size);
 
+	//合入data
 	(void)strlcat(*data, opt, size);
 }
 
-int parse_mntopts(const char *mntopts, unsigned long *mntflags, char **mntdata)
+//解析挂载选项，分析出挂载参数及flags
+int parse_mntopts(const char *mntopts, unsigned long *mntflags/*挂载flags*/, char **mntdata/*挂载参数*/)
 {
 	__do_free char *data = NULL, *s = NULL;
 	char *p;
@@ -1915,6 +1919,7 @@ int parse_mntopts(const char *mntopts, unsigned long *mntflags, char **mntdata)
 		return -1;
 	*data = 0;
 
+	/*遍历mnt参数*/
 	lxc_iterate_parts(p, s, ",")
 		parse_mntopt(p, mntflags, &data, size);
 

@@ -47,6 +47,7 @@ struct lxc_storage;
 
 struct lxc_storage_ops {
 	/* detect whether path is of this bdev type */
+    //检测此path是否为当前bdev类型
 	bool (*detect)(const char *path);
 
 	/* mount requires src and dest to be set. */
@@ -74,11 +75,11 @@ struct lxc_storage_ops {
  * to rsync from one to the other.
  */
 struct lxc_storage {
-	const struct lxc_storage_ops *ops;
-	const char *type;
-	char *src;
-	char *dest;
-	char *mntopts;
+	const struct lxc_storage_ops *ops;/*存储操作集*/
+	const char *type;/*存储类型*/
+	char *src;/*源地址，可能包含前缀*/
+	char *dest;/*挂载点*/
+	char *mntopts;/*挂载骖数*/
 	/* Turn the following into a union if need be. */
 	/* lofd is the open fd for the mounted loopback file. */
 	int lofd;

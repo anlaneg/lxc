@@ -202,16 +202,20 @@ bool lvm_detect(const char *path)
 	struct stat statbuf;
 	char devp[PATH_MAX], buf[4];
 
+	//如果path以'lvm:'开头，则认为为lvm地址
 	if (!strncmp(path, "lvm:", 4))
 		return true;
 
+	//此路径必须可stat
 	ret = stat(path, &statbuf);
 	if (ret < 0)
 		return false;
 
+	//此路径必须指向块设备
 	if (!S_ISBLK(statbuf.st_mode))
 		return false;
 
+	//构造uuid路径
 	ret = snprintf(devp, PATH_MAX, "/sys/dev/block/%d:%d/dm/uuid",
 		       major(statbuf.st_rdev), minor(statbuf.st_rdev));
 	if (ret < 0 || ret >= PATH_MAX) {
@@ -223,32 +227,38 @@ bool lvm_detect(const char *path)
 	if (fd < 0)
 		return false;
 
+	//读取uuid
 	ret = read(fd, buf, sizeof(buf));
 	close(fd);
 	if (ret != sizeof(buf))
 		return false;
 
+	//uuid必须以LVM-开头
 	if (strncmp(buf, "LVM-", 4))
 		return false;
 
 	return true;
 }
 
+//lvm挂载
 int lvm_mount(struct lxc_storage *bdev)
 {
 	const char *src;
 
+	//块设备类型必须为lvm
 	if (strcmp(bdev->type, "lvm"))
 		return -22;
 
 	if (!bdev->src || !bdev->dest)
 		return -22;
 
+	//取块设备路径
 	src = lxc_storage_get_path(bdev->src, bdev->type);
 
 	/* If we might pass in data sometime, then we'll have to enrich
 	 * mount_unknown_fs().
 	 */
+	//未知文件系统挂载
 	return mount_unknown_fs(src, bdev->dest, bdev->mntopts);
 }
 

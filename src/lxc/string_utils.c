@@ -942,6 +942,7 @@ int lxc_char_left_gc(const char *buffer, size_t len)
 	return 0;
 }
 
+//找到buffer右边界（忽略空格,\t,换行)
 int lxc_char_right_gc(const char *buffer, size_t len)
 {
 	int i;

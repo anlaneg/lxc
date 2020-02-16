@@ -909,26 +909,31 @@ out1:
  * is something like 'sshd', then return $templatepath/lxc-sshd.
  * On success return the template, on error return NULL.
  */
+//返回模块文件的绝对地址
 char *get_template_path(const char *t)
 {
 	int ret, len;
 	char *tpath;
 
+	//如果模板地址为绝对地址，则返回绝对地址
 	if (t[0] == '/') {
 		if (access(t, X_OK) == 0) {
 			return strdup(t);
 		} else {
+		    //给定的地址不可访问，返回NULL
 			SYSERROR("Bad template pathname: %s", t);
 			return NULL;
 		}
 	}
 
+	//给定的为相对地址，构造成绝对地址
 	len = strlen(LXCTEMPLATEDIR) + strlen(t) + strlen("/lxc-") + 1;
 
 	tpath = malloc(len);
 	if (!tpath)
 		return NULL;
 
+	//必须为'%s/lxc-%s'格式的模板，如果是返回此绝对地址，否则返回NULL
 	ret = snprintf(tpath, len, "%s/lxc-%s", LXCTEMPLATEDIR, t);
 	if (ret < 0 || ret >= len) {
 		free(tpath);

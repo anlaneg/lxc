@@ -17,7 +17,7 @@ typedef int (*lxc_arguments_parser_t)(struct lxc_arguments *, int, char *);
 typedef int (*lxc_arguments_checker_t)(const struct lxc_arguments *);
 
 struct lxc_arguments {
-	const char *help;
+	const char *help;//命令行帮助信息
 	//显示帮助信息时，此helpfn将被调用
 	void (*helpfn)(const struct lxc_arguments *);
 	const char *progname;//程序名
@@ -25,7 +25,7 @@ struct lxc_arguments {
 	lxc_arguments_parser_t parser;//定制的其它选项解析
 	lxc_arguments_checker_t checker;//定制的参数检查
 
-	const char *name;
+	const char *name;//容器名称
 	char *log_file;//日志文件名称
 	char *log_priority;//日志优先级
 	int quiet;//不输出任何信息
@@ -67,7 +67,7 @@ struct lxc_arguments {
 	bool close_all_fds;
 
 	/* lxc-create */
-	char *bdevtype, *configfile, *template;
+	char *bdevtype/*块设备类型*/, *configfile/*配置文件路径*/, *template/*模板名称或路径*/;
 	char *fstype;
 	uint64_t fssize;
 	char *lvname, *vgname, *thinpool;

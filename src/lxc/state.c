@@ -33,6 +33,7 @@ static const char *const strstate[] = {
     "ABORTING", "FREEZING", "FROZEN",  "THAWED",
 };
 
+//将container状态转发为字符串形式
 const char *lxc_state2str(lxc_state_t state)
 {
 	if (state < STOPPED || state > MAX_STATE - 1)
@@ -55,6 +56,7 @@ lxc_state_t lxc_str2state(const char *state)
 
 lxc_state_t lxc_getstate(const char *name, const char *lxcpath)
 {
+    //取name容器的状态
 	return lxc_cmd_get_state(name, lxcpath);
 }
 

@@ -614,10 +614,12 @@ char *lxc_ipvlan_flag_to_isolation(int flag)
 	return NULL;
 }
 
+//设置字符串类型的配置
 int set_config_string_item(char **conf_item, const char *value)
 {
 	char *new_value;
 
+	/*配置值为空，则置为NULL*/
 	if (lxc_config_value_empty(value)) {
 		free(*conf_item);
 		*conf_item = NULL;

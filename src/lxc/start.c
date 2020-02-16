@@ -293,6 +293,7 @@ restart:
 
 #endif
 		if (closeall) {
+		    //配置了关闭所有fd,故这里将fd关闭
 			close(fd);
 			closedir(dir);
 			INFO("Closed inherited fd %d", fd);

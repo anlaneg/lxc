@@ -3235,11 +3235,14 @@ __cgfsng_ops static int cgfsng_data_init(struct cgroup_ops *ops)
 		ERROR("Failed to retrieve cgroup pattern");
 		return ret_set_errno(-1, ENOMEM);
 	}
+
+	/*记录配置的cgroup_pattern*/
 	ops->cgroup_pattern = must_copy_string(cgroup_pattern);
 
 	return 0;
 }
 
+//初始化cgroup ops
 struct cgroup_ops *cgfsng_ops_init(struct lxc_conf *conf)
 {
 	__do_free struct cgroup_ops *cgfsng_ops = NULL;

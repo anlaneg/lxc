@@ -74,6 +74,7 @@ static int do_freeze_thaw(bool freeze, struct lxc_conf *conf, const char *name,
 	return 0;
 }
 
+//尝试freeze状态
 int lxc_freeze(struct lxc_conf *conf, const char *name, const char *lxcpath)
 {
 	int ret;

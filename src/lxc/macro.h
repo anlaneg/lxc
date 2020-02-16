@@ -221,6 +221,7 @@ extern int __build_bug_on_failed;
 	} while (0)
 #endif
 
+//按__separratorrs分隔splitme，并采用__iterato进行遍历
 #define lxc_iterate_parts(__iterator, __splitme, __separators)                  \
 	for (char *__p = NULL, *__it = strtok_r(__splitme, __separators, &__p); \
 	     (__iterator = __it);                                               \

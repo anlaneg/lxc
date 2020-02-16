@@ -236,6 +236,7 @@ struct lxc_conf {
 	const char *name;
 	bool is_execute;
 	int reboot;
+	/*由lxc.arch配置项产生*/
 	signed long personality;
 	struct utsname *utsname;
 
@@ -285,7 +286,7 @@ struct lxc_conf {
 	bool rootfs_setup;
 	struct lxc_rootfs rootfs;
 
-	bool close_all_fds;
+	bool close_all_fds;//指定是否需要关闭container所有fd
 
 	struct {
 		unsigned int hooks_version;
@@ -293,11 +294,15 @@ struct lxc_conf {
 		struct lxc_list hooks[NUM_LXC_HOOKS];
 	};
 
+	/*由配置项lxc.apparmor.profile产生*/
 	char *lsm_aa_profile;
 	char *lsm_aa_profile_computed;
 	bool lsm_aa_profile_created;
+	/*由配置项lxc.apparmor.allow_nesting产生，是否容许嵌套*/
 	unsigned int lsm_aa_allow_nesting;
+	/*由lxc.apparmor.allow_incomplete配置项产生*/
 	unsigned int lsm_aa_allow_incomplete;
+	/*由lxc.apparmor.raw配置项产生*/
 	struct lxc_list lsm_aa_raw;
 	char *lsm_se_context;
 	char *lsm_se_keyring_context;

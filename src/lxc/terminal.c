@@ -984,6 +984,7 @@ int lxc_terminal_master_cb(int fd, uint32_t events, void *cbdata,
 	return LXC_MAINLOOP_CONTINUE;
 }
 
+//打开container的console口，并做为fd返回
 int lxc_terminal_getfd(struct lxc_container *c, int *ttynum, int *masterfd)
 {
 	return lxc_cmd_console(c->name, ttynum, masterfd, c->config_path);

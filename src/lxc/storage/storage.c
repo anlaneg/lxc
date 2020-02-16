@@ -95,6 +95,7 @@ static const struct lxc_storage_ops loop_ops = {
 };
 
 /* lvm */
+//lvm类型存储的ops
 static const struct lxc_storage_ops lvm_ops = {
     .detect = &lvm_detect,
     .mount = &lvm_mount,
@@ -169,6 +170,7 @@ struct lxc_storage_type {
 	const struct lxc_storage_ops *ops;
 };
 
+//不同块设备类型与其操作集映射表
 static const struct lxc_storage_type bdevs[] = {
 	{ .name = "dir",       .ops = &dir_ops,   },
 	{ .name = "zfs",       .ops = &zfs_ops,   },
@@ -234,6 +236,7 @@ static const struct lxc_storage_type *storage_query(struct lxc_conf *conf)
 	return &bdevs[i];
 }
 
+//取blockc对应类型的lxc_storage
 struct lxc_storage *storage_get(const char *type)
 {
 	size_t i;
@@ -246,11 +249,13 @@ struct lxc_storage *storage_get(const char *type)
 	if (i == numbdevs)
 		return NULL;
 
+	//块设备
 	bdev = malloc(sizeof(struct lxc_storage));
 	if (!bdev)
 		return NULL;
 
 	memset(bdev, 0, sizeof(struct lxc_storage));
+	//块设备ops,块设备type
 	bdev->ops = bdevs[i].ops;
 	bdev->type = bdevs[i].name;
 
@@ -267,6 +272,7 @@ static struct lxc_storage *do_storage_create(const char *dest, const char *type,
 	if (!type)
 		type = "dir";
 
+	//取此type的block dev
 	bdev = storage_get(type);
 	if (!bdev)
 		return NULL;
@@ -681,8 +687,10 @@ const char *lxc_storage_get_path(char *src, const char *prefix)
 	size_t prefix_len;
 
 	prefix_len = strlen(prefix);
+	//src前缀必须为prefix,并且前缀后为':',返回前缀后的内容
 	if (!strncmp(src, prefix, prefix_len) && (*(src + prefix_len) == ':'))
 		return (src + prefix_len + 1);
 
+	//无关缀，直接返回
 	return src;
 }

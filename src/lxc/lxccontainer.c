@@ -146,6 +146,7 @@ static int ongoing_create(struct lxc_container *c)
 	int ret;
 	size_t len;
 
+	//构造partial文件名称
 	len = strlen(c->config_path) + 1 + strlen(c->name) + 1 + strlen(LXC_PARTIAL_FNAME) + 1;
 	path = must_realloc(NULL, len);
 	ret = snprintf(path, len, "%s/%s/%s", c->config_path, c->name, LXC_PARTIAL_FNAME);
@@ -368,6 +369,7 @@ int lxc_container_put(struct lxc_container *c)
 	return 0;
 }
 
+//检查容器c是否已定义
 static bool do_lxcapi_is_defined(struct lxc_container *c)
 {
 	int statret;
@@ -383,10 +385,12 @@ static bool do_lxcapi_is_defined(struct lxc_container *c)
 	if (!c->configfile)
 		goto on_error;
 
+	//获取配置文件的状态
 	statret = stat(c->configfile, &statbuf);
 	if (statret != 0)
 		goto on_error;
 
+	/*配置文件存在*/
 	ret = true;
 
 on_error:
@@ -487,8 +491,10 @@ static rettype fnname(struct lxc_container *c, t1 a1, t2 a2, t3 a3,	\
 	return ret;							\
 }
 
+/*检查container是否已被定义*/
 WRAP_API(bool, lxcapi_is_defined)
 
+//获取指定容器的状态信息
 static const char *do_lxcapi_state(struct lxc_container *c)
 {
 	lxc_state_t s;
@@ -510,11 +516,13 @@ static bool is_stopped(struct lxc_container *c)
 	return (s == STOPPED);
 }
 
+/*检查容器是否处于running状态*/
 static bool do_lxcapi_is_running(struct lxc_container *c)
 {
 	if (!c)
 		return false;
 
+	//如果container不处于stop状态，则认为它处于running状态
 	return !is_stopped(c);
 }
 
@@ -527,15 +535,19 @@ static bool do_lxcapi_freeze(struct lxc_container *c)
 	if (!c || !c->lxc_conf)
 		return false;
 
+	/*取容器状态*/
 	s = lxc_getstate(c->name, c->config_path);
 	if (s != FROZEN)
+	    /*当前不处于frozen状态，则将其frozen*/
 		return lxc_freeze(c->lxc_conf, c->name, c->config_path) == 0;
 
+	/*当前处于frozen状态，则返回true*/
 	return true;
 }
 
 WRAP_API(bool, lxcapi_freeze)
 
+//通过查状态，确定为frozen状态，则执行解冻
 static bool do_lxcapi_unfreeze(struct lxc_container *c)
 {
 	lxc_state_t s;
@@ -562,6 +574,7 @@ static int do_lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *ma
 
 WRAP_API_2(int, lxcapi_console_getfd, int *, int *)
 
+//连接到container的console口
 static int lxcapi_console(struct lxc_container *c, int ttynum, int stdinfd,
 			  int stdoutfd, int stderrfd, int escape)
 {
@@ -603,6 +616,7 @@ static int do_lxcapi_console_log(struct lxc_container *c, struct lxc_console_log
 
 WRAP_API_1(int, lxcapi_console_log, struct lxc_console_log *)
 
+//通过cmd获得container的pid
 static pid_t do_lxcapi_init_pid(struct lxc_container *c)
 {
 	if (!c)
@@ -630,6 +644,7 @@ static bool load_config_locked(struct lxc_container *c, const char *fname)
 	return true;
 }
 
+/*执行container配置加载*/
 static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 {
 	int lret;
@@ -676,6 +691,7 @@ static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 //加载配置文件(do_lxcapi_load_config完成具体工作）
 WRAP_API_1(bool, lxcapi_load_config, const char *)
 
+//设置container是否成为daemon
 static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
 {
 	if (!c || !c->lxc_conf)
@@ -684,6 +700,7 @@ static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
 	if (container_mem_lock(c))
 		return false;
 
+	//指定是否采用daemon
 	c->daemonize = state;
 
 	container_mem_unlock(c);
@@ -693,6 +710,7 @@ static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
 
 WRAP_API_1(bool, lxcapi_want_daemonize, bool)
 
+//配置是否需要关闭所有fd
 static bool do_lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
 {
 	if (!c || !c->lxc_conf)
@@ -1159,6 +1177,7 @@ on_error:
 	return true;
 }
 
+//容器启动
 static bool lxcapi_start(struct lxc_container *c, int useinit,
 			 char *const argv[])
 {
@@ -1172,6 +1191,7 @@ static bool lxcapi_start(struct lxc_container *c, int useinit,
 }
 
 /* Note, there MUST be an ending NULL. */
+//容器启动（参数不同）
 static bool lxcapi_startl(struct lxc_container *c, int useinit, ...)
 {
 	va_list ap;
@@ -1207,6 +1227,7 @@ on_error:
 	return bret;
 }
 
+//通过cmd请求容器停止
 static bool do_lxcapi_stop(struct lxc_container *c)
 {
 	int ret;
@@ -1780,6 +1801,7 @@ out_error:
 	return true;
 }
 
+//清空容器在内存中的配置
 static void lxcapi_clear_config(struct lxc_container *c)
 {
 	if (!c || !c->lxc_conf)
@@ -1975,6 +1997,7 @@ free_tpath:
 	return ret;
 }
 
+//容器创建
 static bool lxcapi_create(struct lxc_container *c, const char *t,
 			  const char *bdevtype, struct bdev_specs *specs,
 			  int flags, char *const argv[])
@@ -1988,6 +2011,7 @@ static bool lxcapi_create(struct lxc_container *c, const char *t,
 	return ret;
 }
 
+//重启容器
 static bool do_lxcapi_reboot(struct lxc_container *c)
 {
 	int ret;
@@ -2018,6 +2042,7 @@ static bool do_lxcapi_reboot(struct lxc_container *c)
 
 WRAP_API(bool, lxcapi_reboot)
 
+//重启容器（含timeout)
 static bool do_lxcapi_reboot2(struct lxc_container *c, int timeout)
 {
 	int killret, ret;
@@ -2157,6 +2182,7 @@ static bool do_lxcapi_shutdown(struct lxc_container *c, int timeout)
 
 WRAP_API_1(bool, lxcapi_shutdown, int)
 
+//容器创建（支持任意个参数）
 static bool lxcapi_createl(struct lxc_container *c, const char *t,
 		const char *bdevtype, struct bdev_specs *specs, int flags, ...)
 {
@@ -2174,6 +2200,7 @@ static bool lxcapi_createl(struct lxc_container *c, const char *t,
 	 * need to get a copy of the arguments.
 	 */
 	va_start(ap, flags);
+	//收集参数
 	args = lxc_va_arg_list_to_argv(ap, 0, 0);
 	va_end(ap);
 	if (!args) {
@@ -2181,6 +2208,7 @@ static bool lxcapi_createl(struct lxc_container *c, const char *t,
 		goto out;
 	}
 
+	//传递参数给args，完成容器创建
 	bret = do_lxcapi_create(c, t, bdevtype, specs, flags, args);
 
 out:
@@ -2217,6 +2245,7 @@ static void do_clear_unexp_config_line(struct lxc_conf *conf, const char *key)
 	return clear_unexp_config_line(conf, key, false);
 }
 
+//清除指定key的配置
 static bool do_lxcapi_clear_config_item(struct lxc_container *c,
 					const char *key)
 {
@@ -2234,9 +2263,11 @@ static bool do_lxcapi_clear_config_item(struct lxc_container *c,
 	 * implemented.
 	 */
 	if (config && config->clr)
+	    /*存在此配置项，清除此配置项*/
 		ret = config->clr(key, c->lxc_conf, NULL);
 
 	if (!ret)
+	    /*清除保存的配置行*/
 		do_clear_unexp_config_line(c->lxc_conf, key);
 
 	container_mem_unlock(c);
@@ -2564,6 +2595,7 @@ static char **do_lxcapi_get_ips(struct lxc_container *c, const char *interface,
 
 WRAP_API_3(char **, lxcapi_get_ips, const char *, const char *, int)
 
+/*获取指定配置项*/
 static int do_lxcapi_get_config_item(struct lxc_container *c, const char *key, char *retv, int inlen)
 {
 	int ret = -1;
@@ -2588,6 +2620,7 @@ static int do_lxcapi_get_config_item(struct lxc_container *c, const char *key, c
 
 WRAP_API_3(int, lxcapi_get_config_item, const char *, char *, int)
 
+//通过cmd获取配置项
 static char* do_lxcapi_get_running_config_item(struct lxc_container *c, const char *key)
 {
 	char *ret;
@@ -2605,12 +2638,14 @@ static char* do_lxcapi_get_running_config_item(struct lxc_container *c, const ch
 
 WRAP_API_1(char *, lxcapi_get_running_config_item, const char *)
 
+//列出当前支持的所有key,或者满足要求的keys
 static int do_lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv, int inlen)
 {
 	int ret = -1;
 
 	/* List all config items. */
 	if (!key)
+	    //没有指定key,列出所有配置项
 		return lxc_list_config_items(retv, inlen);
 
 	if (!c || !c->lxc_conf)
@@ -2626,6 +2661,7 @@ static int do_lxcapi_get_keys(struct lxc_container *c, const char *key, char *re
 	if (strncmp(key, "lxc.net.", 8) == 0)
 		ret = lxc_list_net(c->lxc_conf, key, retv, inlen);
 	else
+	    //列出非lxc.net.的key
 		ret = lxc_list_subkeys(c->lxc_conf, key, retv, inlen);
 
 	container_mem_unlock(c);
@@ -2673,11 +2709,13 @@ static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file)
 	if (lret)
 		return false;
 
+	//打开配置文件（以只写模式）
 	fd = open(alt_file, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
 		  S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 	if (fd < 0)
 		goto on_error;
 
+	//写配置文件
 	lret = write_config(fd, c->lxc_conf);
 	close(fd);
 	if (lret < 0)
@@ -3157,11 +3195,13 @@ int lxc_set_config_item_locked(struct lxc_conf *conf, const char *key,
 	if (!config)
 		return -EINVAL;
 
+	//设置指定配置项
 	ret = config->set(key, v, conf, NULL);
 	if (ret < 0)
 		return -EINVAL;
 
 	if (lxc_config_value_empty(v))
+	    /*配置项value为空，执行配置清除*/
 		do_clear_unexp_config_line(conf, key);
 	else
 		bret = do_append_unexp_config_line(conf, key, v);
@@ -3171,6 +3211,7 @@ int lxc_set_config_item_locked(struct lxc_conf *conf, const char *key,
 	return 0;
 }
 
+//设置配置项
 static bool do_set_config_item_locked(struct lxc_container *c, const char *key,
 				      const char *v)
 {
@@ -3189,6 +3230,7 @@ static bool do_set_config_item_locked(struct lxc_container *c, const char *key,
 	return true;
 }
 
+//设置配置项
 static bool do_lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v)
 {
 	bool b = false;
@@ -3207,6 +3249,7 @@ static bool do_lxcapi_set_config_item(struct lxc_container *c, const char *key, 
 
 WRAP_API_2(bool, lxcapi_set_config_item, const char *, const char *)
 
+//获取容器配置文件路径
 static char *lxcapi_config_file_name(struct lxc_container *c)
 {
 	if (!c || !c->configfile)
@@ -3229,6 +3272,7 @@ static const char *lxcapi_get_config_path(struct lxc_container *c)
  * c->config_path, which must be set.
  * The lxc_container must be locked or not yet public.
  */
+//设置配置文件路径
 static bool set_config_filename(struct lxc_container *c)
 {
 	char *newpath;
@@ -4017,6 +4061,7 @@ out:
 	return NULL;
 }
 
+//容器clone
 static struct lxc_container *lxcapi_clone(struct lxc_container *c, const char *newname,
 		const char *lxcpath, int flags,
 		const char *bdevtype, const char *bdevdata, uint64_t newsize,
@@ -5294,7 +5339,8 @@ static int do_lxcapi_seccomp_notify_fd(struct lxc_container *c)
 
 WRAP_API(int, lxcapi_seccomp_notify_fd)
 
-struct lxc_container *lxc_container_new(const char *name, const char *configpath)
+//构造lxc container对象
+struct lxc_container *lxc_container_new(const char *name/*container名称*/, const char *configpath)
 {
 	struct lxc_container *c;
 	size_t len;
@@ -5311,11 +5357,13 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 	memset(c, 0, sizeof(*c));
 
 	if (configpath)
-	    //指定配置path
+	    //指定配置文件路径
 		c->config_path = strdup(configpath);
 	else
 	    //未指定配置path,使用默认值
 		c->config_path = strdup(lxc_global_config_value("lxc.lxcpath"));
+
+	/*申请内存失败*/
 	if (!c->config_path) {
 		fprintf(stderr, "Failed to allocate memory for %s\n", name);
 		goto err;
@@ -5332,6 +5380,7 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 	}
 	(void)strlcpy(c->name, name, len + 1);
 
+	//设置容器默认线程数
 	c->numthreads = 1;
 	c->slock = lxc_newlock(c->config_path, name);
 	if (!c->slock) {
@@ -5377,6 +5426,7 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 		break;
 	}
 
+	/*构造container对象*/
 	c->daemonize = true;
 	c->pidfile = NULL;
 

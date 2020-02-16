@@ -159,7 +159,7 @@ lxc_config_define(proc);
  * lxc.ab.c will always be matched to lxc.ab. That is, the lxc.ab.c option
  * has to be placed above lxc.ab.
  */
-//记录有效的配置项
+//记录lxc规定的所有有效配置项
 static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.arch",                      set_config_personality,                 get_config_personality,                 clr_config_personality,               },
 	{ "lxc.apparmor.profile",          set_config_apparmor_profile,            get_config_apparmor_profile,            clr_config_apparmor_profile,          },
@@ -1438,6 +1438,7 @@ static int set_config_apparmor_allow_incomplete(const char *key,
 		return 0;
 	}
 
+	//配置的为一个无符号整数
 	if (lxc_safe_uint(value, &lxc_conf->lsm_aa_allow_incomplete) < 0)
 		return -1;
 
@@ -1472,9 +1473,11 @@ static int set_config_apparmor_raw(const char *key,
 	char *elem;
 	struct lxc_list *list;
 
+	//如果配置项为空，则清除所有list项
 	if (lxc_config_value_empty(value))
 		return lxc_clear_apparmor_raw(lxc_conf);
 
+	//配置项的每一个value,均做为一个list node
 	list = malloc(sizeof(*list));
 	if (!list) {
 		errno = ENOMEM;
@@ -2449,6 +2452,7 @@ static void update_hwaddr(const char *line)
 	rand_complete_hwaddr(p);
 }
 
+//增加配置行到conf->unexpanded_config
 int append_unexp_config_line(const char *line, struct lxc_conf *conf)
 {
 	size_t linelen;
@@ -2774,6 +2778,7 @@ static int parse_line(char *buffer, void *data)
 	if (empty_line)
 		goto on_error;
 
+	//修正line的有效起始位置
 	line += lxc_char_left_gc(line, strlen(line));
 
 	/* ignore comments */
@@ -2782,26 +2787,31 @@ static int parse_line(char *buffer, void *data)
 		goto on_error;
 
 	/* martian option - don't add it to the config itself */
+	//只考虑lxc.开头的配置
 	if (strncmp(line, "lxc.", 4))
 		goto on_error;
 
 	ret = -1;
 
+	//找到dot位置
 	dot = strchr(line, '=');
 	if (!dot) {
 		ERROR("Invalid configuration line: %s", line);
 		goto on_error;
 	}
 
-	*dot = '\0';
-	value = dot + 1;
+	*dot = '\0';/*确定key的结束位置*/
+	value = dot + 1;/*确定value的起始位置*/
 
+	/*修正key的左边界及右边界*/
 	key = line;
 	key[lxc_char_right_gc(key, strlen(key))] = '\0';
 
+	/*修正value的左边界及右边界*/
 	value += lxc_char_left_gc(value, strlen(value));
 	value[lxc_char_right_gc(value, strlen(value))] = '\0';
 
+	//如果value的值被单引号或者双引号引着，则去掉单引号及双引号
 	if (*value == '\'' || *value == '\"') {
 		size_t len;
 
@@ -2909,7 +2919,7 @@ int lxc_config_read(const char *file/*配置文件的名称*/, struct lxc_conf *
 	    /*如果未指定rcfile,则使用file做为rcfile*/
 		conf->rcfile = strdup(file);
 
-	//针对每行配置文件，执行parse_line执行
+	//针对每行配置文件，执行parse_line函数，解析key,value,并将其添加到conf中
 	return lxc_file_for_each_line_mmap(file, parse_line, &c);
 }
 
@@ -3048,6 +3058,7 @@ int lxc_fill_elevated_privileges(char *flaglist, int *flags)
 }
 
 /* Write out a configuration file. */
+//写配置到配置文件
 int write_config(int fd, const struct lxc_conf *conf)
 {
 	int ret;
@@ -3075,6 +3086,7 @@ bool do_append_unexp_config_line(struct lxc_conf *conf, const char *key,
 	len = strlen(key) + strlen(v) + 4;
 	tmp = must_realloc(NULL, len);
 
+	//生成配置字符串
 	if (lxc_config_value_empty(v))
 		ret = snprintf(tmp, len, "%s =", key);
 	else
@@ -3083,6 +3095,7 @@ bool do_append_unexp_config_line(struct lxc_conf *conf, const char *key,
 		return false;
 
 	/* Save the line verbatim into unexpanded_conf */
+	//保存配置行到unexpanded_conf
 	if (append_unexp_config_line(tmp, conf))
 		return false;
 

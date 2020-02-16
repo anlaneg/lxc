@@ -78,7 +78,7 @@ int lxc_cmd_sock_get_state(const char *name, const char *lxcpath,
 	return lxc_cmd_sock_rcv_state(state_client_fd, timeout);
 }
 
-//构造socket name
+//构造unix socket name
 int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 				  const char *lxcname,
 				  const char *lxcpath,
@@ -159,18 +159,21 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 	return 0;
 }
 
+//连接到cmd socket
 int lxc_cmd_connect(const char *name, const char *lxcpath,
 		    const char *hashed_sock_name, const char *suffix)
 {
 	int ret, client_fd;
 	char path[LXC_AUDS_ADDR_LEN] = {0};
 
+	//构造地址
 	ret = lxc_make_abstract_socket_name(path, sizeof(path), name, lxcpath,
 					    hashed_sock_name, suffix);
 	if (ret < 0)
 		return -1;
 
 	/* Get new client fd. */
+	//连接到server地址，并返回client fd
 	client_fd = lxc_abstract_unix_connect(path);
 	if (client_fd < 0)
 		return -1;

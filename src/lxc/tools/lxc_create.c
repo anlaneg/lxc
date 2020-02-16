@@ -41,6 +41,7 @@ static const struct option my_longopts[] = {
 	LXC_COMMON_OPTIONS
 };
 
+/*lxc-create对应的命令行参数信息*/
 static struct lxc_arguments my_args = {
 	.progname     = "lxc-create",
 	.helpfn       = create_helpfn,
@@ -91,16 +92,20 @@ Options :\n\
 	.log_file     = "none",
 };
 
+//定制的选项解析函数
 static int my_parser(struct lxc_arguments *args, int c, char *arg)
 {
 	switch (c) {
 	case 'B':
+	    //块设备类型
 		args->bdevtype = arg;
 		break;
 	case 'f':
+	    //配置文件名称
 		args->configfile = arg;
 		break;
 	case 't':
+	    //模块路径或名称
 		args->template = arg;
 		break;
 	case '0':
@@ -134,31 +139,39 @@ static int my_parser(struct lxc_arguments *args, int c, char *arg)
 	return 0;
 }
 
+//显示lxc-create命令对应的独特帮助信息
 static void create_helpfn(const struct lxc_arguments *args)
 {
 	char *argv[3], *path;
 	pid_t pid;
 
+	//如果模板为空，则直接返回
 	if (!args->template)
 		return;
 
 	pid = fork();
 	if (pid) {
+	    //父进程等待子进程退出
 		(void)wait_for_pid(pid);
 		return;
 	}
 
+	//子进程开始处理
+
+	//取模板文件的绝对路径
 	path = get_template_path(args->template);
 
 	argv[0] = path;
 	argv[1] = "-h";
 	argv[2] = NULL;
 
+	//执行此模板文件的帮助信息
 	execv(path, argv);
 	ERROR("Error executing %s -h", path);
 	_exit(EXIT_FAILURE);
 }
 
+//块设备参数校验
 static bool validate_bdev_args(struct lxc_arguments *args)
 {
 	if (strncmp(args->bdevtype, "best", strlen(args->bdevtype)) != 0) {
@@ -192,6 +205,7 @@ static bool validate_bdev_args(struct lxc_arguments *args)
 	return true;
 }
 
+//负责创建container
 int main(int argc, char *argv[])
 {
 	struct lxc_container *c;
@@ -199,6 +213,7 @@ int main(int argc, char *argv[])
 	struct lxc_log log;
 	int flags = 0;
 
+	//lxc-create参数解析
 	if (lxc_arguments_parse(&my_args, argc, argv))
 		exit(EXIT_FAILURE);
 
@@ -213,6 +228,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 
 	if (!my_args.template) {
+	    /*必须指定模块名称*/
 		ERROR("A template must be specified");
 		ERROR("Use \"none\" if you really want a container without a rootfs");
 		exit(EXIT_FAILURE);
@@ -223,9 +239,11 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	//如果指定模板为'none',则认为未指定模板
 	if (strncmp(my_args.template, "none", strlen(my_args.template)) == 0)
 		my_args.template = NULL;
 
+	/*如未指定块设备类型，则使用_unset*/
 	if (!my_args.bdevtype)
 		my_args.bdevtype = "_unset";
 
@@ -243,33 +261,40 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	/*如未指定lxcpath,则使用配置文件中的lxc.lxcpath*/
 	if (!my_args.lxcpath[0])
 		my_args.lxcpath[0] = lxc_get_global_config_item("lxc.lxcpath");
 
+	//确保lxcpath存在
 	if (mkdir_p(my_args.lxcpath[0], 0755))
 		exit(EXIT_FAILURE);
 
+	//非root用户，检查对lxcpath的访问权限
 	if (geteuid())
 		if (access(my_args.lxcpath[0], O_RDONLY) < 0) {
 			ERROR("You lack access to %s", my_args.lxcpath[0]);
 			exit(EXIT_FAILURE);
 		}
 
+	//构造container对象
 	c = lxc_container_new(my_args.name, my_args.lxcpath[0]);
 	if (!c) {
 		ERROR("Failed to create lxc container");
 		exit(EXIT_FAILURE);
 	}
 
+	//检查container是否已被定义，如已定义则报错
 	if (c->is_defined(c)) {
 		lxc_container_put(c);
 		ERROR("Container already exists");
 		exit(EXIT_FAILURE);
 	}
 
+	//指定了配置文件，则为容器加载配置文件
 	if (my_args.configfile)
 		c->load_config(c, my_args.configfile);
 	else
+	    /*未指定，则加载默认配置文件*/
 		c->load_config(c, lxc_get_global_config_item("lxc.default_config"));
 
 	memset(&spec, 0, sizeof(spec));
@@ -315,6 +340,7 @@ int main(int argc, char *argv[])
 	if (my_args.quiet)
 		flags = LXC_CREATE_QUIET;
 
+	//创建container
 	if (!c->create(c, my_args.template, my_args.bdevtype, &spec, flags, &argv[optind])) {
 		ERROR("Failed to create container %s", c->name);
 		lxc_container_put(c);
