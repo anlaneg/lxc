@@ -1344,6 +1344,7 @@ static int lxc_mount_rootfs(struct lxc_conf *conf)
 		return -1;
 	}
 
+	//挂载块设备
 	ret = bdev->ops->mount(bdev);
 	storage_put(bdev);
 	if (ret < 0) {
@@ -3237,6 +3238,7 @@ int chown_mapped_root(const char *path, struct lxc_conf *conf)
 		return -1;
 	}
 
+	//创建子进程运行chown_mapped_root_exec_wrapper
 	if (hostgid == sb.st_gid)
 		ret = run_command(cmd_output, sizeof(cmd_output),
 				  chown_mapped_root_exec_wrapper,
@@ -3449,6 +3451,7 @@ int lxc_setup_rootfs_prepare_root(struct lxc_conf *conf, const char *name,
 
 	remount_all_slave();
 
+	//调用pre-mount钩子点
 	ret = run_lxc_hooks(name, "pre-mount", conf, NULL);
 	if (ret < 0) {
 		ERROR("Failed to run pre-mount hooks");

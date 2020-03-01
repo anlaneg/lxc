@@ -45,7 +45,7 @@ struct lxc_handler {
 	int pinfd;
 
 	/* Signal file descriptor. */
-	int sigfd;
+	int sigfd;//信号对应的fd
 
 	/* List of file descriptors referring to the namespaces of the
 	 * container. Note that these are not necessarily identical to

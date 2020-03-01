@@ -40,6 +40,7 @@ struct lxc_arguments {
 	int lxcpath_additional;
 
 	/* for lxc-start */
+	//指出共享的名称
 	const char *share_ns[32]; /* size must be greater than LXC_NS_MAX */
 
 	/* for lxc-console */
@@ -125,7 +126,7 @@ struct lxc_arguments {
 	bool setuid;
 
 	/* remaining arguments */
-	char *const *argv;
+	char *const *argv;//提供的其它参数
 	int argc;
 
 	/* private arguments */

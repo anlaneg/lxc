@@ -2838,6 +2838,7 @@ on_error:
 	return ret;
 }
 
+//解析配置行，获得配置
 static struct new_config_item *parse_new_conf_line(char *buffer)
 {
 	char *dot, *key, *line, *linep, *value;
@@ -2849,9 +2850,11 @@ static struct new_config_item *parse_new_conf_line(char *buffer)
 	if (!line)
 		return NULL;
 
+	//确定line左边界
 	line += lxc_char_left_gc(line, strlen(line));
 
 	/* martian option - don't add it to the config itself */
+	//只支持lxc.开头的配置变量
 	if (strncmp(line, "lxc.", 4))
 		goto on_error;
 
@@ -2865,12 +2868,15 @@ static struct new_config_item *parse_new_conf_line(char *buffer)
 	*dot = '\0';
 	value = dot + 1;
 
+	//确定key的左边界与key的右边界
 	key = line;
 	key[lxc_char_right_gc(key, strlen(key))] = '\0';
 
+	//确定value的左边界与value的右边界
 	value += lxc_char_left_gc(value, strlen(value));
 	value[lxc_char_right_gc(value, strlen(value))] = '\0';
 
+	//如果有单引号，或者有双引号，则直接移除掉
 	if (*value == '\'' || *value == '\"') {
 		size_t len;
 
@@ -2886,6 +2892,7 @@ static struct new_config_item *parse_new_conf_line(char *buffer)
 	if (!new)
 		goto on_error;
 
+	//填充分析获得的key,value
 	new->key = strdup(key);
 	new->val = strdup(value);
 	if (!new->val || !new->key)
@@ -2923,6 +2930,7 @@ int lxc_config_read(const char *file/*配置文件的名称*/, struct lxc_conf *
 	return lxc_file_for_each_line_mmap(file, parse_line, &c);
 }
 
+//将命令行传入的配置行加入defines
 int lxc_config_define_add(struct lxc_list *defines, char *arg)
 {
 	struct lxc_list *dent;
@@ -2931,12 +2939,14 @@ int lxc_config_define_add(struct lxc_list *defines, char *arg)
 	if (!dent)
 		return -1;
 
+	//解析配置行，生成key,value对
 	dent->elem = parse_new_conf_line(arg);
 	if (!dent->elem) {
 		free(dent);
 		return -1;
 	}
 
+	//加入到defines中
 	lxc_list_add_tail(defines, dent);
 
 	return 0;

@@ -964,7 +964,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	 * here to protect the on disk container?  We don't want to exclude
 	 * things like lxc_info while the container is running.
 	 */
-	if (c->daemonize) {
+	if (c->daemonize/*需要做daemon*/) {
 		bool started;
 		char title[2048];
 		pid_t pid_first, pid_second;
@@ -1069,7 +1069,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	/* We need to write PID file after daemonize, so we always write the
 	 * right PID.
 	 */
-	if (c->pidfile) {
+	if (c->pidfile/*需要写pid文件*/) {
 		int w;
 		char pidstr[INTTYPE_TO_STRLEN(pid_t)];
 
@@ -1145,6 +1145,7 @@ reboot:
 	}
 
 	if (useinit)
+	    /*lxc-execute方式启动*/
 		ret = lxc_execute(c->name, argv, 1, handler, c->config_path,
 				  c->daemonize, &c->error_num);
 	else
@@ -1179,7 +1180,7 @@ on_error:
 
 //容器启动
 static bool lxcapi_start(struct lxc_container *c, int useinit,
-			 char *const argv[])
+			 char *const argv[]/*用户传入的参数*/)
 {
 	bool ret;
 
@@ -4631,6 +4632,7 @@ static bool do_lxcapi_snapshot_destroy_all(struct lxc_container *c)
 
 WRAP_API(bool, lxcapi_snapshot_destroy_all)
 
+//检查container是否存活
 static bool do_lxcapi_may_control(struct lxc_container *c)
 {
 	if (!c)

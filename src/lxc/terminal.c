@@ -818,6 +818,7 @@ int lxc_terminal_create_log_file(struct lxc_terminal *terminal)
 	if (!terminal->log_path)
 		return 0;
 
+	//创建terminal log对应的fd
 	terminal->log_fd = lxc_unpriv(open(terminal->log_path, O_CLOEXEC | O_RDWR | O_CREAT | O_APPEND, 0600));
 	if (terminal->log_fd < 0) {
 		SYSERROR("Failed to open terminal log file \"%s\"", terminal->log_path);
@@ -828,6 +829,7 @@ int lxc_terminal_create_log_file(struct lxc_terminal *terminal)
 	return 0;
 }
 
+//创建terminal
 int lxc_terminal_create(struct lxc_terminal *terminal)
 {
 	int ret;
@@ -874,6 +876,7 @@ int lxc_terminal_setup(struct lxc_conf *conf)
 	int ret;
 	struct lxc_terminal *terminal = &conf->console;
 
+	//terminal路径如未配置，则直接返回
 	if (terminal->path && strcmp(terminal->path, "none") == 0) {
 		INFO("No terminal requested");
 		return 0;
@@ -883,10 +886,12 @@ int lxc_terminal_setup(struct lxc_conf *conf)
 	if (ret < 0)
 		return -1;
 
+	//创建terminal日志文件
 	ret = lxc_terminal_create_log_file(terminal);
 	if (ret < 0)
 		goto err;
 
+	//创建terminal对应的ring buffer
 	ret = lxc_terminal_create_ringbuf(terminal);
 	if (ret < 0)
 		goto err;

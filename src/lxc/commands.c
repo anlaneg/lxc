@@ -302,6 +302,7 @@ static int lxc_cmd(const char *name, struct lxc_cmd_rr *cmd, int *stopped,
 	return ret;
 }
 
+//尝试获得init_pid,如果获取成功，则认为容器存活
 int lxc_try_cmd(const char *name, const char *lxcpath)
 {
 	int stopped, ret;

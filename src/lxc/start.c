@@ -312,6 +312,7 @@ restart:
 	return 0;
 }
 
+//创建signal fd
 static int setup_signal_fd(sigset_t *oldmask)
 {
 	int ret;
@@ -319,6 +320,7 @@ static int setup_signal_fd(sigset_t *oldmask)
 	const int signals[] = {SIGBUS, SIGILL, SIGSEGV, SIGWINCH};
 
 	/* Block everything except serious error signals. */
+	//阻塞所有信号，除了signals中指定的信号
 	ret = sigfillset(&mask);
 	if (ret < 0)
 		return -EBADF;
@@ -335,6 +337,7 @@ static int setup_signal_fd(sigset_t *oldmask)
 		return -EBADF;
 	}
 
+	//创建信号对应的fd
 	ret = signalfd(-1, &mask, SFD_CLOEXEC);
 	if (ret < 0) {
 		SYSERROR("Failed to create signal file descriptor");
@@ -813,6 +816,7 @@ int lxc_init(const char *name, struct lxc_handler *handler)
 	}
 	TRACE("Set container state to \"STARTING\"");
 
+	//设置环境变量，并调用pre-start hook点
 	/* Start of environment variable setup for hooks. */
 	ret = setenv("LXC_NAME", name, 1);
 	if (ret < 0)
@@ -876,6 +880,7 @@ int lxc_init(const char *name, struct lxc_handler *handler)
 
 	TRACE("Set environment variables");
 
+	//运行pre-start hook
 	ret = run_lxc_hooks(name, "pre-start", conf, NULL);
 	if (ret < 0) {
 		ERROR("Failed to run lxc.hook.pre-start for container \"%s\"", name);
@@ -916,6 +921,7 @@ int lxc_init(const char *name, struct lxc_handler *handler)
 	}
 	TRACE("Initialized cgroup driver");
 
+	//lsm driver 执行prepare回调
 	ret = lsm_process_prepare(conf, handler->lxcpath);
 	if (ret < 0) {
 		ERROR("Failed to initialize LSM");
@@ -1685,7 +1691,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (ret < 0)
 		goto out_sync_fini;
 
-	//需要创建net namespace
+	//需要创建net namespace,找出其auto gateway对应的gateway地址
 	if (handler->ns_clone_flags & CLONE_NEWNET) {
 		ret = lxc_find_gateway_addresses(handler);
 		if (ret) {
@@ -1832,6 +1838,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		goto out_delete_net;
 
 	/* If not done yet, we're now ready to preserve the network namespace */
+	//设定相应的net namespace
 	if (handler->nsfd[LXC_NS_NET] < 0) {
 		ret = lxc_try_preserve_ns(handler->pid, "net");
 		if (ret < 0) {
@@ -1851,7 +1858,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		TRACE("Allocated new network namespace id");
 
 	/* Create the network configuration. */
-	//需要创建net namespace,创建相应
+	//创建相应对应的netdev
 	if (handler->ns_clone_flags & CLONE_NEWNET) {
 		ret = lxc_create_network(handler);
 		if (ret < 0) {
@@ -1867,6 +1874,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		}
 	}
 
+	//配置/proc/文件配置
 	if (!lxc_list_empty(&conf->procs)) {
 		ret = setup_proc_filesystem(&conf->procs, handler->pid);
 		if (ret < 0)
@@ -1906,6 +1914,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	}
 	TRACE("Set up cgroup2 device controller limits");
 
+	//cgroup namespace维护
 	if (handler->ns_clone_flags & CLONE_NEWCGROUP) {
 		/* Now we're ready to preserve the cgroup namespace */
 		ret = lxc_try_preserve_ns(handler->pid, "cgroup");
@@ -1924,6 +1933,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	TRACE("Finished setting up cgroups");
 
 	/* Run any host-side start hooks */
+	//执行start-host钩子点
 	ret = run_lxc_hooks(name, "start-host", conf, NULL);
 	if (ret < 0) {
 		ERROR("Failed to run lxc.hook.start-host");
@@ -1968,10 +1978,12 @@ static int lxc_spawn(struct lxc_handler *handler)
 		goto out_delete_net;
 	}
 
+	//执行post_start钩子点
 	ret = handler->ops->post_start(handler, handler->data);
 	if (ret < 0)
 		goto out_abort;
 
+	//设置进程状态
 	ret = lxc_set_state(name, handler, RUNNING);
 	if (ret < 0) {
 		ERROR("Failed to set state to \"%s\"", lxc_state2str(RUNNING));
@@ -2167,7 +2179,7 @@ static struct lxc_operations start_ops = {
 	.post_start = post_start
 };
 
-int lxc_start(const char *name, char *const argv[], struct lxc_handler *handler,
+int lxc_start(const char *name/*容器名称*/, char *const argv[], struct lxc_handler *handler,
 	      const char *lxcpath, bool daemonize, int *error_num)
 {
     //启动参数

@@ -328,6 +328,7 @@ int lxc_arguments_str_to_int(struct lxc_arguments *args, const char *str)
 	return (int)val;
 }
 
+//将share_ns转换为配置
 bool lxc_setup_shared_ns(struct lxc_arguments *args, struct lxc_container *c)
 {
 	int i;
@@ -337,7 +338,7 @@ bool lxc_setup_shared_ns(struct lxc_arguments *args, struct lxc_container *c)
 
 		value = args->share_ns[i];
 		if (!value)
-			continue;
+			continue;//跳过未配置共享的namespace
 
 		if (i == LXC_NS_NET)
 			key = "lxc.namespace.share.net";

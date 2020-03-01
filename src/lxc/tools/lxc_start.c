@@ -102,20 +102,26 @@ static int my_parser(struct lxc_arguments *args, int c, char *arg)
 		args->close_all_fds = true;
 		break;
 	case 's':
+	    //配置变量设置
 		return lxc_config_define_add(&defines, arg);
 	case 'p':
+	    //配置使用pidfile
 		args->pidfile = arg;
 		break;
 	case OPT_SHARE_NET:
+	    //配置共享网络
 		args->share_ns[LXC_NS_NET] = arg;
 		break;
 	case OPT_SHARE_IPC:
+	    //配置共享ipc
 		args->share_ns[LXC_NS_IPC] = arg;
 		break;
 	case OPT_SHARE_UTS:
+	    //配置共享uts
 		args->share_ns[LXC_NS_UTS] = arg;
 		break;
 	case OPT_SHARE_PID:
+	    //配置共享pid
 		args->share_ns[LXC_NS_PID] = arg;
 		break;
 	}
@@ -160,11 +166,14 @@ int main(int argc, char *argv[])
 	struct lxc_log log;
 	int err = EXIT_FAILURE;
 	char *rcfile = NULL;
+
+	//默认运行/sbin/init程序
 	char *const default_args[] = {
 		"/sbin/init",
 		NULL,
 	};
 
+	//准备defines链表，接受参数传入的配置
 	lxc_list_init(&defines);
 
 	if (lxc_caps_init())
@@ -175,9 +184,10 @@ int main(int argc, char *argv[])
 		exit(err);
 
 	if (!my_args.argc)
-	    //未提供其它参数，则使用默认参数
+	    //命令行未提供其它参数，则使用默认参数
 		args = default_args;
 	else
+	    //使用命令行提供的参数
 		args = my_args.argv;
 
 	//初始化log
@@ -191,7 +201,7 @@ int main(int argc, char *argv[])
 	if (lxc_log_init(&log))
 		exit(err);
 
-	//lxcpath必须可读
+	//lxcpath必须存在，且可读
 	lxcpath = my_args.lxcpath[0];
 	if (access(lxcpath, O_RDONLY) < 0) {
 		ERROR("You lack access to %s", lxcpath);
@@ -206,7 +216,7 @@ int main(int argc, char *argv[])
 	 */
 	/* rcfile is specified in the cli option */
 	if (my_args.rcfile) {
-	    //指定了专门的配置文件
+	    //如果指定了专门的配置文件
 		rcfile = (char *)my_args.rcfile;
 
 		//创建container对象
@@ -219,14 +229,14 @@ int main(int argc, char *argv[])
 		//清除容器已有配置
 		c->clear_config(c);
 
-		//为容器加载指定rcfile的配置
+		//并为容器加载指定rcfile的配置
 		if (!c->load_config(c, rcfile)) {
 			ERROR("Failed to load rcfile");
 			lxc_container_put(c);
 			exit(err);
 		}
 
-		//更新容器配置文件
+		//更新容器配置文件为rcfile
 		c->configfile = strdup(my_args.rcfile);
 		if (!c->configfile) {
 			ERROR("Out of memory setting new config filename");
@@ -282,6 +292,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	//使通过命令行提供的配置生效
 	if (!lxc_config_define_load(&defines, c))
 		goto out;
 
@@ -291,12 +302,14 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	//指明了pidfile,确保pidfile文件存在
 	if (my_args.pidfile)
 		if (ensure_path(&c->pidfile, my_args.pidfile) < 0) {
 			ERROR("Failed to ensure pidfile '%s'", my_args.pidfile);
 			goto out;
 		}
 
+	//配置了console,使console配置的路径生效。
 	if (my_args.console)
 		if (!c->set_config_item(c, "lxc.console.path", my_args.console))
 			goto out;
@@ -305,6 +318,7 @@ int main(int argc, char *argv[])
 		if (!c->set_config_item(c, "lxc.console.logfile", my_args.console_log))
 			goto out;
 
+	//转换来自命令行的shared ns配置
 	if (!lxc_setup_shared_ns(&my_args, c))
 		goto out;
 
@@ -318,8 +332,10 @@ int main(int argc, char *argv[])
 
 	//启动容器
 	if (args == default_args)
+	    //采用默认参数启动
 		err = c->start(c, 0, NULL) ? EXIT_SUCCESS : EXIT_FAILURE;
 	else
+	    //采用用户配置参数启动
 		err = c->start(c, 0, args) ? EXIT_SUCCESS : EXIT_FAILURE;
 	if (err) {
 		ERROR("The container failed to start");

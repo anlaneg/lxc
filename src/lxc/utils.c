@@ -1610,7 +1610,7 @@ pop_stack:
 	return umounts;
 }
 
-int run_command_internal(char *buf, size_t buf_size, int (*child_fn)(void *), void *args, bool wait_status)
+int run_command_internal(char *buf, size_t buf_size, int (*child_fn/*子进程函数*/)(void *), void *args, bool wait_status)
 {
 	pid_t child;
 	int ret, fret, pipefd[2];
@@ -1625,6 +1625,7 @@ int run_command_internal(char *buf, size_t buf_size, int (*child_fn)(void *), vo
 		return -1;
 	}
 
+	//创建子进程
 	child = lxc_raw_clone(0, NULL);
 	if (child < 0) {
 		close(pipefd[0]);
@@ -1653,6 +1654,7 @@ int run_command_internal(char *buf, size_t buf_size, int (*child_fn)(void *), vo
 		}
 
 		/* Does not return. */
+		//执行子进程函数
 		child_fn(args);
 		ERROR("Failed to exec command");
 		_exit(EXIT_FAILURE);
@@ -1678,6 +1680,7 @@ int run_command_internal(char *buf, size_t buf_size, int (*child_fn)(void *), vo
 	return fret;
 }
 
+//创建子进程运行child_fn函数
 int run_command(char *buf, size_t buf_size, int (*child_fn)(void *), void *args)
 {
     return run_command_internal(buf, buf_size, child_fn, args, false);

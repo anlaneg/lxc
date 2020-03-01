@@ -34,6 +34,7 @@
 
 #define _PATH_DEVPTMX "/dev/ptmx"
 
+//打开终端并操作
 int openpty (int *amaster, int *aslave, char *name, struct termios *termp,
        struct winsize *winp)
 {
