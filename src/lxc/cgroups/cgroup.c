@@ -10,6 +10,7 @@
 
 #include "cgroup.h"
 #include "cgroup2_devices.h"
+#include "compiler.h"
 #include "conf.h"
 #include "config.h"
 #include "initutils.h"
@@ -18,7 +19,7 @@
 
 lxc_log_define(cgroup, lxc);
 
-extern struct cgroup_ops *cgfsng_ops_init(struct lxc_conf *conf);
+__hidden extern struct cgroup_ops *cgfsng_ops_init(struct lxc_conf *conf);
 
 //初始化cgroup
 struct cgroup_ops *cgroup_init(struct lxc_conf *conf)
@@ -55,13 +56,10 @@ struct cgroup_ops *cgroup_init(struct lxc_conf *conf)
 
 void cgroup_exit(struct cgroup_ops *ops)
 {
-	char **cur;
-	struct hierarchy **it;
-
 	if (!ops)
 		return;
 
-	for (cur = ops->cgroup_use; cur && *cur; cur++)
+	for (char **cur = ops->cgroup_use; cur && *cur; cur++)
 		free(*cur);
 
 	free(ops->cgroup_pattern);
@@ -71,14 +69,12 @@ void cgroup_exit(struct cgroup_ops *ops)
 	if (ops->cgroup2_devices)
 		bpf_program_free(ops->cgroup2_devices);
 
-	for (it = ops->hierarchies; it && *it; it++) {
-		char **p;
-
-		for (p = (*it)->controllers; p && *p; p++)
+	for (struct hierarchy **it = ops->hierarchies; it && *it; it++) {
+		for (char **p = (*it)->controllers; p && *p; p++)
 			free(*p);
 		free((*it)->controllers);
 
-		for (p = (*it)->cgroup2_chown; p && *p; p++)
+		for (char **p = (*it)->cgroup2_chown; p && *p; p++)
 			free(*p);
 		free((*it)->cgroup2_chown);
 
@@ -86,7 +82,7 @@ void cgroup_exit(struct cgroup_ops *ops)
 		free((*it)->container_base_path);
 		free((*it)->container_full_path);
 		free((*it)->monitor_full_path);
-		if ((*it)->cgfd_mon >= 0)
+		if ((*it)->cgfd_con >= 0)
 			close((*it)->cgfd_con);
 		if ((*it)->cgfd_mon >= 0)
 			close((*it)->cgfd_mon);

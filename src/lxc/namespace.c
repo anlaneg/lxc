@@ -21,34 +21,6 @@
 
 lxc_log_define(namespace, lxc);
 
-/*
- * Let's use the "standard stack limit" (i.e. glibc thread size default) for
- * stack sizes: 8MB.
- */
-//调用linux clone系统调用
-#define __LXC_STACK_SIZE (8 * 1024 * 1024)
-pid_t lxc_clone(int (*fn)(void *), void *arg, int flags, int *pidfd)
-{
-	pid_t ret;
-	void *stack;
-
-	stack = malloc(__LXC_STACK_SIZE);
-	if (!stack) {
-		SYSERROR("Failed to allocate clone stack");
-		return -ENOMEM;
-	}
-
-#ifdef __ia64__
-	ret = __clone2(fn, stack, __LXC_STACK_SIZE, flags | SIGCHLD, arg, pidfd);
-#else
-	ret = clone(fn, stack + __LXC_STACK_SIZE, flags | SIGCHLD, arg, pidfd);
-#endif
-	if (ret < 0)
-		SYSERROR("Failed to clone (%#x)", flags);
-
-	return ret;
-}
-
 /* Leave the user namespace at the first position in the array of structs so
  * that we always attach to it first when iterating over the struct and using
  * setns() to switch namespaces. This especially affects lxc_attach(): Suppose
@@ -72,7 +44,8 @@ const struct ns_info ns_info[LXC_NS_MAX] = {
 	[LXC_NS_UTS]    =  { "uts",    CLONE_NEWUTS,    "CLONE_NEWUTS",    "LXC_UTS_NS"     },
 	[LXC_NS_IPC]    =  { "ipc",    CLONE_NEWIPC,    "CLONE_NEWIPC",    "LXC_IPC_NS"     },
 	[LXC_NS_NET]    =  { "net",    CLONE_NEWNET,    "CLONE_NEWNET",    "LXC_NET_NS"     },
-	[LXC_NS_CGROUP] =  { "cgroup", CLONE_NEWCGROUP, "CLONE_NEWCGROUP", "LXC_CGROUP_NS"  }
+	[LXC_NS_CGROUP] =  { "cgroup", CLONE_NEWCGROUP, "CLONE_NEWCGROUP", "LXC_CGROUP_NS"  },
+	[LXC_NS_TIME]	=  { "time",   CLONE_NEWTIME,   "CLONE_NEWTIME",   "LXC_TIME_NS"    },
 };
 
 int lxc_namespace_2_cloneflag(const char *namespace)

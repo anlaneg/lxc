@@ -38,6 +38,14 @@ static char *api_extensions[] = {
 	"cgroup2_devices",
 #endif
 	"cgroup2",
+	"pidfd",
+	"cgroup_advanced_isolation",
+	"network_bridge_vlan",
+	"time_namespace",
+	"seccomp_allow_deny_syntax",
+	"devpts_fd",
+	"seccomp_notify_fd_active",
+	"seccomp_proxy_send_notify_fd",
 };
 
 static size_t nr_api_extensions = sizeof(api_extensions) / sizeof(*api_extensions);

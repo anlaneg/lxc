@@ -67,7 +67,7 @@ struct criu_opts {
 	struct lxc_handler *handler;
 	int console_fd;
 	/* The path that is bind mounted from /dev/console, if any. We don't
-	 * want to use `--ext-mount-map auto`'s result here because the pts
+	 * want to use `--ext-mount-map auto`'s result here because the pty
 	 * device may have a different path (e.g. if the pty number is
 	 * different) on the target host. NULL if lxc.console.path = "none".
 	 */
@@ -89,7 +89,7 @@ static int load_tty_major_minor(char *directory, char *output, int len)
 		return -1;
 	}
 
-	f = fopen(path, "r");
+	f = fopen(path, "re");
 	if (!f) {
 		/* This means we're coming from a liblxc which didn't export
 		 * the tty info. In this case they had to have lxc.console.path
@@ -303,7 +303,7 @@ static void exec_criu(struct cgroup_ops *cgroup_ops, struct lxc_conf *conf,
 		 * the handler the restore task created.
 		 */
 		if (!strcmp(opts->action, "dump") || !strcmp(opts->action, "pre-dump")) {
-			path = lxc_cmd_get_cgroup_path(opts->c->name, opts->c->config_path, controllers[0]);
+			path = lxc_cmd_get_limiting_cgroup_path(opts->c->name, opts->c->config_path, controllers[0]);
 			if (!path) {
 				ERROR("failed to get cgroup path for %s", controllers[0]);
 				goto err;
@@ -311,7 +311,7 @@ static void exec_criu(struct cgroup_ops *cgroup_ops, struct lxc_conf *conf,
 		} else {
 			const char *p;
 
-			p = cgroup_ops->get_cgroup(cgroup_ops, controllers[0]);
+			p = cgroup_ops->get_limiting_cgroup(cgroup_ops, controllers[0]);
 			if (!p) {
 				ERROR("failed to get cgroup path for %s", controllers[0]);
 				goto err;
@@ -367,9 +367,9 @@ static void exec_criu(struct cgroup_ops *cgroup_ops, struct lxc_conf *conf,
 		goto err;
 
 	while (getmntent_r(mnts, &mntent, buf, sizeof(buf))) {
-		char *mntdata;
+		unsigned long flags = 0;
+		char *mntdata = NULL;
 		char arg[2 * PATH_MAX + 2];
-		unsigned long flags;
 
 		if (parse_mntopts(mntent.mnt_opts, &flags, &mntdata) < 0)
 			goto err;
@@ -406,9 +406,9 @@ static void exec_criu(struct cgroup_ops *cgroup_ops, struct lxc_conf *conf,
 		DECLARE_ARG("-t");
 		DECLARE_ARG(pid);
 
-		freezer_relative = lxc_cmd_get_cgroup_path(opts->c->name,
-							   opts->c->config_path,
-							   "freezer");
+		freezer_relative = lxc_cmd_get_limiting_cgroup_path(opts->c->name,
+								    opts->c->config_path,
+								    "freezer");
 		if (!freezer_relative) {
 			ERROR("failed getting freezer path");
 			goto err;
@@ -793,7 +793,7 @@ static bool criu_version_ok(char **version)
 			return false;
 		}
 
-		f = fdopen(pipes[0], "r");
+		f = fdopen(pipes[0], "re");
 		if (!f) {
 			close(pipes[0]);
 			return false;
@@ -903,7 +903,7 @@ static bool restore_net_info(struct lxc_container *c)
 
 		if (netdev->priv.veth_attr.pair[0] == '\0' &&
 		    netdev->priv.veth_attr.veth1[0] == '\0') {
-			if (!lxc_mkifname(template))
+			if (!lxc_ifname_alnum_case_sensitive(template))
 				goto out_unlock;
 
 			(void)strlcpy(netdev->priv.veth_attr.veth1, template, IFNAMSIZ);
@@ -942,7 +942,7 @@ static void do_restore(struct lxc_container *c, int status_pipe, struct migrate_
 		close(fd);
 	}
 
-	handler = lxc_init_handler(c->name, c->lxc_conf, c->config_path, false);
+	handler = lxc_init_handler(NULL, c->name, c->lxc_conf, c->config_path, false);
 	if (!handler)
 		goto out;
 
@@ -1011,7 +1011,7 @@ static void do_restore(struct lxc_container *c, int status_pipe, struct migrate_
 			}
 
 			if (mount(rootfs->path, rootfs->mount, NULL, MS_BIND, NULL) < 0) {
-				rmdir(rootfs->mount);
+				(void)rmdir(rootfs->mount);
 				goto out_fini_handler;
 			}
 		}
@@ -1020,7 +1020,7 @@ static void do_restore(struct lxc_container *c, int status_pipe, struct migrate_
 		os.action = "restore";
 		os.user = opts;
 		os.c = c;
-		os.console_fd = c->lxc_conf->console.slave;
+		os.console_fd = c->lxc_conf->console.pty;
 		os.criu_version = criu_version;
 		os.handler = handler;
 
@@ -1046,7 +1046,7 @@ static void do_restore(struct lxc_container *c, int status_pipe, struct migrate_
 		/* exec_criu() returning is an error */
 		exec_criu(cgroup_ops, c->lxc_conf, &os);
 		umount(rootfs->mount);
-		rmdir(rootfs->mount);
+		(void)rmdir(rootfs->mount);
 		goto out_fini_handler;
 	} else {
 		char title[2048];
@@ -1085,7 +1085,7 @@ static void do_restore(struct lxc_container *c, int status_pipe, struct migrate_
 					goto out_fini_handler;
 				}
 
-				FILE *f = fopen(buf, "r");
+				FILE *f = fopen(buf, "re");
 				if (!f) {
 					SYSERROR("couldn't read restore's children file %s", buf);
 					goto out_fini_handler;
@@ -1134,8 +1134,8 @@ static void do_restore(struct lxc_container *c, int status_pipe, struct migrate_
 
 		ret = lxc_poll(c->name, handler);
 		if (ret)
-			lxc_abort(c->name, handler);
-		lxc_fini(c->name, handler);
+			lxc_abort(handler);
+		lxc_end(handler);
 		_exit(ret);
 	}
 
@@ -1145,7 +1145,7 @@ out_fini_handler:
 	if (pipes[1] >= 0)
 		close(pipes[1]);
 
-	lxc_fini(c->name, handler);
+	lxc_end(handler);
 
 out:
 	if (status_pipe >= 0) {
@@ -1202,7 +1202,7 @@ static int save_tty_major_minor(char *directory, struct lxc_container *c, char *
 		return -1;
 	}
 
-	f = fopen(path, "w");
+	f = fopen(path, "we");
 	if (!f) {
 		SYSERROR("failed to open %s", path);
 		return -1;
@@ -1323,7 +1323,7 @@ static bool do_dump(struct lxc_container *c, char *mode, struct migrate_opts *op
 fail:
 	close(criuout[0]);
 	close(criuout[1]);
-	rmdir(opts->directory);
+	(void)rmdir(opts->directory);
 	free(criu_version);
 	return false;
 }

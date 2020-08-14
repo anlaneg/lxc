@@ -619,6 +619,12 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
               <option>lxc.net.[i].veth.ipv6.route</option> options.
               Several lines specify several routes.
               The route is in format x.y.z.t/m, eg. 192.168.1.0/24.
+
+              In <option>bridge</option> mode untagged VLAN membership can be set with the
+              <option>lxc.net.[i].veth.vlan.id</option> option. It accepts a special value of 'none' indicating
+              that the container port should be removed from the bridge's default untagged VLAN.
+              The <option>lxc.net.[i].veth.vlan.tagged.id</option> option can be specified multiple times to set
+              the container's bridge port membership to one or more tagged VLANs.
               -->
               <option>veth:</option> 一方がコンテナに、もう一方がホストに接続されるペアの仮想イーサネットデバイスを作成します。
               <option>lxc.net.[i].veth.mode</option> は、veth の親（ホスト側）がホスト上で使うモードを指定します。
@@ -636,6 +642,8 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
               <option>lxc.net.[i].veth.ipv4.route</option>、<option>lxc.net.[i].veth.ipv6.route</option> オプションを使って、静的ルーティングをコンテナを指し示すホスト上に追加できます。
               複数のルートがある場合は複数の設定を指定します。
               ルートは x.y.z.t/m の形式です。例: 192.168.1.0/24
+
+	      <option>bridge</option> モードでは、タグなし VLAN は <option>lxc.net.[i].veth.vlan.id</option> で設定できます。このオプションでは、コンテナポートをブリッジのデフォルトのタグなし VLAN から削除するための特別な値 'none' が指定できます。コンテナのブリッジポートを複数のタグ付き VLAN に所属させるために、<option>lxc.net.[i].veth.vlan.tagged.id</option> を複数回指定できます。
             </para>
 
             <para>
@@ -713,25 +721,25 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
               modes are <option>l3</option>, <option>l3s</option> and
               <option>l2</option>. It defaults to <option>l3</option> mode.
               In <option>l3</option> mode TX processing up to L3 happens on the stack instance
-              attached to the slave device and packets are switched to the stack instance of the
-              master device for the L2 processing and routing from that instance will be
-              used before packets are queued on the outbound device. In this mode the slaves
+              attached to the dependent device and packets are switched to the stack instance of the
+              parent device for the L2 processing and routing from that instance will be
+              used before packets are queued on the outbound device. In this mode the dependent devices
               will not receive nor can send multicast / broadcast traffic.
               In <option>l3s</option> mode TX processing is very similar to the L3 mode except that
               iptables (conn-tracking) works in this mode and hence it is L3-symmetric (L3s).
               This will have slightly less performance but that shouldn't matter since you are
               choosing this mode over plain-L3 mode to make conn-tracking work.
               In <option>l2</option> mode TX processing happens on the stack instance attached to
-              the slave device and packets are switched and queued to the master device to send
-              out. In this mode the slaves will RX/TX multicast and broadcast (if applicable) as well.
+              the dependent device and packets are switched and queued to the parent device to send
+              out. In this mode the dependent devices will RX/TX multicast and broadcast (if applicable) as well.
               <option>lxc.net.[i].ipvlan.isolation</option> specifies the isolation mode.
               The accepted isolation values are <option>bridge</option>,
               <option>private</option> and <option>vepa</option>.
               It defaults to <option>bridge</option>.
-              In <option>bridge</option> isolation mode slaves can cross-talk among themselves
-              apart from talking through the master device.
+              In <option>bridge</option> isolation mode dependent devices can cross-talk among themselves
+              apart from talking through the parent device.
               In <option>private</option> isolation mode the port is set in private mode.
-              i.e. port won't allow cross communication between slaves.
+              i.e. port won't allow cross communication between dependent devices.
               In <option>vepa</option> isolation mode the port is set in VEPA mode.
               i.e. port will offload switching functionality to the external entity as
               described in 802.1Qbg.
@@ -1144,11 +1152,11 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
               <!--
               If set, the container will have a new pseudo tty
               instance, making this private to it. The value specifies
-              the maximum number of pseudo ttys allowed for a pts
+              the maximum number of pseudo ttys allowed for a pty
               instance (this limitation is not implemented yet).
               -->
               もし設定された場合、コンテナは新しい pseudo tty インスタンスを持ち、それを自身のプライベートとします。
-              この値は pts インスタンスに許可される pseudo tty の最大数を指定します (この制限はまだ実装されていません)。
+              この値は pty インスタンスに許可される pseudo tty の最大数を指定します (この制限はまだ実装されていません)。
             </para>
           </listitem>
         </varlistentry>
@@ -1548,7 +1556,7 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
               fstab フォーマットの一行と同じフォーマットのマウントポイントの指定をします。
 
               <!--
-              Moreover lxc supports mount propagation, such as rslave or
+              Moreover lxc supports mount propagation, such as rshared or
               rprivate, and adds three additional mount options.
               <option>optional</option> don't fail if mount does not work.
               <option>create=dir</option> or <option>create=file</option>
@@ -1556,7 +1564,7 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
               <option>relative</option> source path is taken to be relative to
               the mounted container root. For instance,
               -->
-              加えて、LXC では rslave や rprivate といったマウント・プロパゲーションオプションと、独自の 3 つのマウントオプションが使えます。
+              加えて、LXC では rshared や rprivate といったマウント・プロパゲーションオプションと、独自の 3 つのマウントオプションが使えます。
               <option>optional</option> は、マウントが失敗しても失敗を返さずに無視します。
               <option>create=dir</option> と <option>create=file</option> は、マウントポイントをマウントする際にディレクトリもしくはファイルを作成します。
               <option>relative</option> を指定すると、マウントされたコンテナルートからの相対パスとして取得されます。
@@ -2101,6 +2109,63 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
         </varlistentry>
         <varlistentry>
           <term>
+            <option>lxc.cgroup.dir.container</option>
+          </term>
+          <listitem>
+            <para>
+	      <!--
+              This is similar to <option>lxc.cgroup.dir</option>, but must be
+              used together with <option>lxc.cgroup.dir.monitor</option> and
+              affects only the container's cgroup path. This option is mutually
+              exclusive with <option>lxc.cgroup.dir</option>.
+              Note that the final path the container attaches to may be
+              extended further by the
+              <option>lxc.cgroup.dir.container.inner</option> option.
+	      -->
+	      これは <option>lxc.cgroup.dir</option> と同様の設定ですが、かならず <option>lxc.cgroup.dir.monitor</option> と同時に使わなければなりません。そして、設定はコンテナの cgroup パスにのみ影響を与えます。このオプションは <option>lxc.cgroup.dir</option> と同時に設定できません。コンテナがアタッチされる最終的なパスは <option>lxc.cgroup.dir.container.inner</option> オプションによりさらに変更される可能性があります。
+            </para>
+          </listitem>
+        </varlistentry>
+        <varlistentry>
+          <term>
+            <option>lxc.cgroup.dir.monitor</option>
+          </term>
+          <listitem>
+            <para>
+	      <!--
+              This is the monitor process counterpart to
+              <option>lxc.cgroup.dir.container</option>.
+	      -->
+	      このオプションは、モニタプロセスに対して<option>lxc.cgroup.dir.container</option> と同様の働きをします。
+            </para>
+          </listitem>
+        </varlistentry>
+        <varlistentry>
+          <term>
+            <option>lxc.cgroup.dir.container.inner</option>
+          </term>
+          <listitem>
+            <para>
+	      <!--
+              Specify an additional subdirectory where the cgroup namespace
+              will be created. With this option, the cgroup limits will be
+              applied to the outer path specified in
+              <option>lxc.cgroup.dir.container</option>, which is not accessible
+              from within the container, making it possible to better enforce
+              limits for privileged containers in a way they cannot override
+              them.
+              This only works in conjunction with the
+              <option>lxc.cgroup.dir.container</option> and
+              <option>lxc.cgroup.dir.monitor</option> options and has otherwise
+              no effect.
+	      -->
+	      cgroup 名前空間が作られる追加のサブディレクトリを指定します。このオプションを使うと、cgroup の制限は <option>lxc.cgroup.dir.container</option> で指定した外部パスに適用されます。<option>lxc.cgroup.dir.container</option> はコンテナ内部からアクセスできないため、特権コンテナに対する制限を上書きできない方法でよりよい方法で強制できます。
+	      このオプションは <option>lxc.cgroup.dir.container</option> と <option>lxc.cgroup.dir.monitor</option> と同時に指定したときのみ機能し、それ以外の場合は効果がありません。
+            </para>
+          </listitem>
+        </varlistentry>
+        <varlistentry>
+          <term>
             <option>lxc.cgroup.relative</option>
           </term>
           <listitem>
@@ -2239,7 +2304,7 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
             standard namespace identifiers as seen in the
             <filename>/proc/PID/ns</filename> directory.
             The <option>lxc.namespace.keep</option> is a
-            blacklist option, i.e. it is useful when enforcing that containers
+            denylist option, i.e. it is useful when enforcing that containers
             must keep a specific set of namespaces.
             -->
               コンテナが、作成元のプロセスから継承する (新しい名前空間を作らずに元のプロセスの名前空間のまま実行する) 名前空間を指定します。継承する名前空間はスペース区切りのリストで指定します。指定する名前空間名は、<filename>/proc/PID/ns</filename> ディレクトリ内に存在する標準の名前空間指示子でなければなりません。<option>lxc.namespace.keep</option> はブラックリストを指定するオプションです。つまり、コンテナに特定の名前空間を使い続けることを強制したい場合に便利です。
@@ -2352,6 +2417,39 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
 
           </listitem>
         </varlistentry>
+
+        <varlistentry>
+          <term>
+            <option>lxc.time.offset.boot</option>
+          </term>
+          <listitem>
+            <para>
+              <!--
+            Specify a positive or negative offset for the boottime clock. The
+            format accepts hours (h), minutes (m), seconds (s),
+            milliseconds (ms), microseconds (us), and nanoseconds (ns).
+                -->
+              ブートタイム(boottime)クロックの正または負のオフセット値を指定します。フォーマットは、時(h)、分(m)、秒(s)、ミリ秒(ms)、マイクロ秒(us)、ナノ秒(ns)を指定できます。
+            </para>
+          </listitem>
+        </varlistentry>
+
+        <varlistentry>
+          <term>
+            <option>lxc.time.offset.monotonic</option>
+          </term>
+          <listitem>
+            <para>
+              <!--
+            Specify a positive or negative offset for the montonic clock. The
+            format accepts hours (h), minutes (m), seconds (s),
+            milliseconds (ms), microseconds (us), and nanoseconds (ns).
+                -->
+              monotonicクロックの正または負のオフセット値を指定します。フォーマットは、時(h)、分(m)、秒(s)、ミリ秒(ms)、マイクロ秒(us)、ナノ秒(ns)を指定できます。
+            </para>
+          </listitem>
+        </varlistentry>
+
       </variablelist>
     </refsect2>
 
@@ -2590,6 +2688,57 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
             <programlisting>lxc.selinux.context = system_u:system_r:lxc_t:s0:c22</programlisting>
           </listitem>
         </varlistentry>
+        <varlistentry>
+          <term>
+            <option>lxc.selinux.context.keyring</option>
+          </term>
+          <listitem>
+            <para>
+	      <!--
+              Specify the SELinux context under which the container's keyring
+              should be created. By default this the same as lxc.selinux.context, or
+              the the context lxc is executed under if lxc.selinux.context has not been set.
+	      -->
+	      コンテナのキーリングを作成する SELinux コンテキストを指定します。
+	      デフォルトでは lxc.selinux.context と同じになります。
+	      lxc.selinux.context が設定されていない場合は、LXC のコンテキストで実行されます。
+            </para>
+            <programlisting>lxc.selinux.context.keyring = system_u:system_r:lxc_t:s0:c22</programlisting>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
+      <title>カーネルキーリング<!-- Kernel Keyring --></title>
+      <para>
+	<!--
+        The Linux Keyring facility is primarily a way for various
+        kernel components to retain or cache security data, authentication
+        keys, encryption keys, and other data in the kernel. By default lxc
+        will create a new session keyring for the started application.
+	-->
+	Linux キーリング機能は、さまざまなカーネルコンポーネントが、セキュリティーデータ、認証キー、暗号化キー、その他のデータをカーネルに保持またはキャッシュするための機能です。
+	デフォルトでは、LXC は開始したアプリケーションのために、新しいセッションキーリングを作成します。
+      </para>
+      <variablelist>
+        <varlistentry>
+          <term>
+            <option>lxc.keyring.session</option>
+          </term>
+          <listitem>
+            <para>
+	      <!--
+              Disable the creation of new session keyring by lxc. The started
+              application will then inherit the current session keyring.
+              By default, or when passing the value 1, a new keyring will be created.
+	      -->
+	      LXC による新しいセッションキーリングの作成を無効にできます。その場合、開始したアプリケーションは、その時点のセッションキーリングを継承します。
+	      デフォルトは 1 で、1 の場合は LXC は新しいキーリングを作成します。
+            </para>
+            <programlisting>lxc.keyring.session = 0</programlisting>
+          </listitem>
+        </varlistentry>
       </variablelist>
     </refsect2>
 
@@ -2609,18 +2758,18 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
       <para>
         <!--
         Versions 1 and 2 are currently supported.  In version 1, the
-        policy is a simple whitelist.  The second line therefore must
-        read "whitelist", with the rest of the file containing one (numeric)
-        syscall number per line.  Each syscall number is whitelisted,
-        while every unlisted number is blacklisted for use in the container
+        policy is a simple allowlist.  The second line therefore must
+        read "allowlist", with the rest of the file containing one (numeric)
+        syscall number per line.  Each syscall number is allowlisted,
+        while every unlisted number is denylisted for use in the container
         -->
-        現時点では、バージョン番号は 1 と 2 をサポートしています。バージョン 1 では、ポリシーはシンプルなホワイトリストですので、2 行目は "whitelist" でなければなりません。
+        現時点では、バージョン番号は 1 と 2 をサポートしています。バージョン 1 では、ポリシーはシンプルなホワイトリストですので、2 行目は "allowlist" でなければなりません。
         そして残りの行には 1 行に 1 つずつ、システムコール番号を書きます。各行のシステムコール番号がホワイトリスト化され、リストにない番号は、そのコンテナではブラックリストに入ります。
       </para>
 
       <para>
         <!--
-       In version 2, the policy may be blacklist or whitelist,
+       In version 2, the policy may be denylist or allowlist,
        supports per-rule and per-policy default actions, and supports
        per-architecture system call resolution from textual names.
           -->
@@ -2628,7 +2777,7 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
       </para>
       <para>
         <!--
-       An example blacklist policy, in which all system calls are
+       An example denylist policy, in which all system calls are
        allowed except for mknod, which will simply do nothing and
        return 0 (success), looks like:
        -->
@@ -2637,7 +2786,7 @@ by KATOH Yasufumi <karma at jazz.email.ne.jp>
 
       <programlisting>
       2
-      blacklist
+      denylist
       mknod errno 0
       ioctl notify
       </programlisting>

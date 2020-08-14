@@ -77,7 +77,6 @@ static inline void clear_bit(unsigned bit, uint32_t *bitarr)
 	bitarr[bit / NBITS] &= ~(1 << (bit % NBITS));
 }
 static char *copy_to_eol(char *s);
-static void free_string_list(char **list);
 static char *get_mountpoint(char *line);
 static bool get_uid_gid(const char *user, uid_t *uid, gid_t *gid);
 static int handle_login(const char *user, uid_t uid, gid_t gid);
@@ -454,16 +453,6 @@ static size_t string_list_length(char **list)
 	return len;
 }
 
-/* Free null-terminated array of strings. */
-static void free_string_list(char **list)
-{
-	char **it;
-
-	for (it = list; it && *it; it++)
-		free(*it);
-	free(list);
-}
-
 /* Write single integer to file. */
 static bool write_int(char *path, int v)
 {
@@ -486,8 +475,8 @@ static bool write_int(char *path, int v)
 /* Recursively remove directory and its parents. */
 static int recursive_rmdir(char *dirname)
 {
+	__do_closedir DIR *dir = NULL;
 	struct dirent *direntp;
-	DIR *dir;
 	int r = 0;
 
 	dir = opendir(dirname);
@@ -522,12 +511,6 @@ next:
 	}
 
 	if (rmdir(dirname) < 0) {
-		if (!r)
-			pam_cgfs_debug("Failed to delete %s: %s\n", dirname, strerror(errno));
-		r = -1;
-	}
-
-	if (closedir(dir) < 0) {
 		if (!r)
 			pam_cgfs_debug("Failed to delete %s: %s\n", dirname, strerror(errno));
 		r = -1;

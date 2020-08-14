@@ -16,6 +16,8 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "macro.h"
+#include "syscall_numbers.h"
 
 #ifdef HAVE_LINUX_MEMFD_H
 #include <linux/memfd.h>
@@ -25,18 +27,17 @@
 #include <sys/signalfd.h>
 #endif
 
+#ifdef HAVE_STRUCT_OPEN_HOW
+#include <linux/openat2.h>
+#endif
+
 typedef int32_t key_serial_t;
 
 #if !HAVE_KEYCTL
 static inline long __keyctl(int cmd, unsigned long arg2, unsigned long arg3,
 			    unsigned long arg4, unsigned long arg5)
 {
-#ifdef __NR_keyctl
 	return syscall(__NR_keyctl, cmd, arg2, arg3, arg4, arg5);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
 }
 #define keyctl __keyctl
 #endif
@@ -57,90 +58,29 @@ static inline long __keyctl(int cmd, unsigned long arg2, unsigned long arg3,
 
 #ifndef HAVE_MEMFD_CREATE
 //调用memfd_create系统回调
-static inline int memfd_create_lxc(const char *name, unsigned int flags) {
-	#ifndef __NR_memfd_create
-		#if defined __i386__
-			#define __NR_memfd_create 356
-		#elif defined __x86_64__
-			#define __NR_memfd_create 319
-		#elif defined __arm__
-			#define __NR_memfd_create 385
-		#elif defined __aarch64__
-			#define __NR_memfd_create 279
-		#elif defined __s390__
-			#define __NR_memfd_create 350
-		#elif defined __powerpc__
-			#define __NR_memfd_create 360
-		#elif defined __sparc__
-			#define __NR_memfd_create 348
-		#elif defined __blackfin__
-			#define __NR_memfd_create 390
-		#elif defined __ia64__
-			#define __NR_memfd_create 1340
-		#elif defined _MIPS_SIM
-			#if _MIPS_SIM == _MIPS_SIM_ABI32
-				#define __NR_memfd_create 4354
-			#endif
-			#if _MIPS_SIM == _MIPS_SIM_NABI32
-				#define __NR_memfd_create 6318
-			#endif
-			#if _MIPS_SIM == _MIPS_SIM_ABI64
-				#define __NR_memfd_create 5314
-			#endif
-		#endif
-	#endif
-	#ifdef __NR_memfd_create
+static inline int memfd_create_lxc(const char *name, unsigned int flags)
+{
 	return syscall(__NR_memfd_create, name, flags);
-	#else
-	errno = ENOSYS;
-	return -1;
-	#endif
 }
 #define memfd_create memfd_create_lxc
 #else
 extern int memfd_create(const char *name, unsigned int flags);
 #endif
 
-#if !HAVE_PIVOT_ROOT
+#ifndef HAVE_PIVOT_ROOT
 static int pivot_root(const char *new_root, const char *put_old)
 {
-#ifdef __NR_pivot_root
 	return syscall(__NR_pivot_root, new_root, put_old);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
 }
 #else
 extern int pivot_root(const char *new_root, const char *put_old);
-#endif
-
-#if !defined(__NR_setns) && !defined(__NR_set_ns)
-	#if defined(__x86_64__)
-		#define __NR_setns 308
-	#elif defined(__i386__)
-		#define __NR_setns 346
-	#elif defined(__arm__)
-		#define __NR_setns 375
-	#elif defined(__aarch64__)
-		#define __NR_setns 375
-	#elif defined(__powerpc__)
-		#define __NR_setns 350
-	#elif defined(__s390__)
-		#define __NR_setns 339
-	#endif
 #endif
 
 /* Define sethostname() if missing from the C library */
 #ifndef HAVE_SETHOSTNAME
 static inline int sethostname(const char *name, size_t len)
 {
-#ifdef __NR_sethostname
 	return syscall(__NR_sethostname, name, len);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
 }
 #endif
 
@@ -149,14 +89,7 @@ static inline int sethostname(const char *name, size_t len)
 //设置thread的namespace
 static inline int setns(int fd, int nstype)
 {
-#ifdef __NR_setns
 	return syscall(__NR_setns, fd, nstype);
-#elif defined(__NR_set_ns)
-	return syscall(__NR_set_ns, fd, nstype);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
 }
 #endif
 
@@ -181,55 +114,15 @@ struct signalfd_siginfo {
 	uint8_t __pad[48];
 };
 
-#ifndef __NR_signalfd4
-/* assume kernel headers are too old */
-#if __i386__
-#define __NR_signalfd4 327
-#elif __x86_64__
-#define __NR_signalfd4 289
-#elif __powerpc__
-#define __NR_signalfd4 313
-#elif __s390x__
-#define __NR_signalfd4 322
-#elif __arm__
-#define __NR_signalfd4 355
-#elif __mips__ && _MIPS_SIM == _ABIO32
-#define __NR_signalfd4 4324
-#elif __mips__ && _MIPS_SIM == _ABI64
-#define __NR_signalfd4 5283
-#elif __mips__ && _MIPS_SIM == _ABIN32
-#define __NR_signalfd4 6287
-#endif
-#endif
-
-#ifndef __NR_signalfd
-/* assume kernel headers are too old */
-#if __i386__
-#define __NR_signalfd 321
-#elif __x86_64__
-#define __NR_signalfd 282
-#elif __powerpc__
-#define __NR_signalfd 305
-#elif __s390x__
-#define __NR_signalfd 316
-#elif __arm__
-#define __NR_signalfd 349
-#elif __mips__ && _MIPS_SIM == _ABIO32
-#define __NR_signalfd 4317
-#elif __mips__ && _MIPS_SIM == _ABI64
-#define __NR_signalfd 5276
-#elif __mips__ && _MIPS_SIM == _ABIN32
-#define __NR_signalfd 6280
-#endif
-#endif
-
 static inline int signalfd(int fd, const sigset_t *mask, int flags)
 {
 	int retval;
 
 	retval = syscall(__NR_signalfd4, fd, mask, _NSIG / 8, flags);
+#ifdef __NR_signalfd
 	if (errno == ENOSYS && flags == 0)
 		retval = syscall(__NR_signalfd, fd, mask, _NSIG / 8);
+#endif
 
 	return retval;
 }
@@ -239,15 +132,139 @@ static inline int signalfd(int fd, const sigset_t *mask, int flags)
 #ifndef HAVE_UNSHARE
 static inline int unshare(int flags)
 {
-#ifdef __NR_unshare
 	return syscall(__NR_unshare, flags);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
 }
 #else
 extern int unshare(int);
 #endif
+
+/* Define faccessat() if missing from the C library */
+#ifndef HAVE_FACCESSAT
+static int faccessat(int __fd, const char *__file, int __type, int __flag)
+{
+	return syscall(__NR_faccessat, __fd, __file, __type, __flag);
+}
+#endif
+
+#ifndef HAVE_MOVE_MOUNT
+static inline int move_mount_lxc(int from_dfd, const char *from_pathname,
+				 int to_dfd, const char *to_pathname,
+				 unsigned int flags)
+{
+	return syscall(__NR_move_mount, from_dfd, from_pathname, to_dfd,
+		       to_pathname, flags);
+}
+#define move_mount move_mount_lxc
+#else
+extern int move_mount(int from_dfd, const char *from_pathname, int to_dfd,
+		      const char *to_pathname, unsigned int flags);
+#endif
+
+#ifndef HAVE_OPEN_TREE
+static inline int open_tree_lxc(int dfd, const char *filename, unsigned int flags)
+{
+	return syscall(__NR_open_tree, dfd, filename, flags);
+}
+#define open_tree open_tree_lxc
+#else
+extern int open_tree(int dfd, const char *filename, unsigned int flags);
+#endif
+
+#ifndef HAVE_FSOPEN
+static inline int fsopen_lxc(const char *fs_name, unsigned int flags)
+{
+	return syscall(__NR_fsopen, fs_name, flags);
+}
+#define fsopen fsopen_lxc
+#else
+extern int fsopen(const char *fs_name, unsigned int flags);
+#endif
+
+#ifndef HAVE_FSPICK
+static inline int fspick_lxc(int dfd, const char *path, unsigned int flags)
+{
+	return syscall(__NR_fspick, dfd, path, flags);
+}
+#define fspick fspick_lxc
+#else
+extern int fspick(int dfd, const char *path, unsigned int flags);
+#endif
+
+#ifndef HAVE_FSCONFIG
+static inline int fsconfig_lxc(int fd, unsigned int cmd, const char *key, const void *value, int aux)
+{
+	return syscall(__NR_fsconfig, fd, cmd, key, value, aux);
+}
+#define fsconfig fsconfig_lxc
+#else
+extern int fsconfig(int fd, unsigned int cmd, const char *key, const void *value, int aux);
+#endif
+
+#ifndef HAVE_FSMOUNT
+static inline int fsmount_lxc(int fs_fd, unsigned int flags, unsigned int attr_flags)
+{
+	return syscall(__NR_fsmount, fs_fd, flags, attr_flags);
+}
+#define fsmount fsmount_lxc
+#else
+extern int fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags);
+#endif
+
+/*
+ * Arguments for how openat2(2) should open the target path. If only @flags and
+ * @mode are non-zero, then openat2(2) operates very similarly to openat(2).
+ *
+ * However, unlike openat(2), unknown or invalid bits in @flags result in
+ * -EINVAL rather than being silently ignored. @mode must be zero unless one of
+ * {O_CREAT, O_TMPFILE} are set.
+ *
+ * @flags: O_* flags.
+ * @mode: O_CREAT/O_TMPFILE file mode.
+ * @resolve: RESOLVE_* flags.
+ */
+struct lxc_open_how {
+	__u64 flags;
+	__u64 mode;
+	__u64 resolve;
+};
+
+/* how->resolve flags for openat2(2). */
+#ifndef RESOLVE_NO_XDEV
+#define RESOLVE_NO_XDEV		0x01 /* Block mount-point crossings
+					(includes bind-mounts). */
+#endif
+
+#ifndef RESOLVE_NO_MAGICLINKS
+#define RESOLVE_NO_MAGICLINKS	0x02 /* Block traversal through procfs-style
+					"magic-links". */
+#endif
+
+#ifndef RESOLVE_NO_SYMLINKS
+#define RESOLVE_NO_SYMLINKS	0x04 /* Block traversal through all symlinks
+					(implies OEXT_NO_MAGICLINKS) */
+#endif
+
+#ifndef RESOLVE_BENEATH
+#define RESOLVE_BENEATH		0x08 /* Block "lexical" trickery like
+					"..", symlinks, and absolute
+					paths which escape the dirfd. */
+#endif
+
+#ifndef RESOLVE_IN_ROOT
+#define RESOLVE_IN_ROOT		0x10 /* Make all jumps to "/" and ".."
+					be scoped inside the dirfd
+					(similar to chroot(2)). */
+#endif
+
+#ifndef HAVE_OPENAT2
+static inline int openat2(int dfd, const char *filename, struct lxc_open_how *how, size_t size)
+{
+	/* When struct open_how is updated we should update lxc as well. */
+#ifdef HAVE_STRUCT_OPEN_HOW
+	BUILD_BUG_ON(sizeof(struct lxc_open_how) != sizeof(struct open_how));
+#endif
+	return syscall(__NR_openat2, dfd, filename, (struct open_how *)how, size);
+}
+#endif /* HAVE_OPENAT2 */
 
 #endif /* __LXC_SYSCALL_WRAPPER_H */

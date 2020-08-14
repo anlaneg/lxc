@@ -5,7 +5,9 @@
 
 #include <stdint.h>
 
+#include "compiler.h"
 #include "list.h"
+#include "memory_utils.h"
 
 #define LXC_MAINLOOP_ERROR -1
 #define LXC_MAINLOOP_CONTINUE 0
@@ -19,25 +21,19 @@ struct lxc_epoll_descr {
 typedef int (*lxc_mainloop_callback_t)(int fd, uint32_t event, void *data,
 				       struct lxc_epoll_descr *descr);
 
-extern int lxc_mainloop(struct lxc_epoll_descr *descr, int timeout_ms);
+__hidden extern int lxc_mainloop(struct lxc_epoll_descr *descr, int timeout_ms);
 
-extern int lxc_mainloop_add_handler(struct lxc_epoll_descr *descr, int fd,
-				    lxc_mainloop_callback_t callback,
-				    void *data);
+__hidden extern int lxc_mainloop_add_handler_events(struct lxc_epoll_descr *descr, int fd, int events,
+						    lxc_mainloop_callback_t callback, void *data);
+__hidden extern int lxc_mainloop_add_handler(struct lxc_epoll_descr *descr, int fd,
+					     lxc_mainloop_callback_t callback, void *data);
 
-extern int lxc_mainloop_del_handler(struct lxc_epoll_descr *descr, int fd);
+__hidden extern int lxc_mainloop_del_handler(struct lxc_epoll_descr *descr, int fd);
 
-extern int lxc_mainloop_open(struct lxc_epoll_descr *descr);
+__hidden extern int lxc_mainloop_open(struct lxc_epoll_descr *descr);
 
-extern int lxc_mainloop_close(struct lxc_epoll_descr *descr);
+__hidden extern void lxc_mainloop_close(struct lxc_epoll_descr *descr);
 
-static inline void __auto_lxc_mainloop_close__(struct lxc_epoll_descr **descr)
-{
-	if (*descr)
-		lxc_mainloop_close(*descr);
-}
-
-#define __do_lxc_mainloop_close \
-	__attribute__((__cleanup__(__auto_lxc_mainloop_close__)))
+define_cleanup_function(struct lxc_epoll_descr *, lxc_mainloop_close);
 
 #endif

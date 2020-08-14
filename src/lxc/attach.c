@@ -39,8 +39,9 @@
 #include "macro.h"
 #include "mainloop.h"
 #include "memory_utils.h"
+#include "mount_utils.h"
 #include "namespace.h"
-#include "raw_syscalls.h"
+#include "process_utils.h"
 #include "syscall_wrappers.h"
 #include "terminal.h"
 #include "utils.h"
@@ -58,10 +59,10 @@ static struct lxc_proc_context_info *lxc_proc_get_context_info(pid_t pid)
 {
 	__do_free char *line = NULL;
 	__do_fclose FILE *proc_file = NULL;
+	__do_free struct lxc_proc_context_info *info = NULL;
 	int ret;
 	bool found;
 	char proc_fn[LXC_PROC_STATUS_LEN];
-	struct lxc_proc_context_info *info;
 	size_t line_bufsz = 0;
 
 	/* Read capabilities. */
@@ -69,11 +70,9 @@ static struct lxc_proc_context_info *lxc_proc_get_context_info(pid_t pid)
 	if (ret < 0 || ret >= LXC_PROC_STATUS_LEN)
 		return NULL;
 
-	proc_file = fopen(proc_fn, "r");
-	if (!proc_file) {
-		SYSERROR("Failed to open %s", proc_fn);
-		return NULL;
-	}
+	proc_file = fopen(proc_fn, "re");
+	if (!proc_file)
+		return log_error_errno(NULL, errno, "Failed to open %s", proc_fn);
 
 	info = calloc(1, sizeof(*info));
 	if (!info)
@@ -89,17 +88,17 @@ static struct lxc_proc_context_info *lxc_proc_get_context_info(pid_t pid)
 		}
 	}
 
-	if (!found) {
-		ERROR("Could not read capability bounding set from %s", proc_fn);
-		free(info);
-		return NULL;
-	}
+	if (!found)
+		return log_error_errno(NULL, ENOENT, "Failed to read capability bounding set from %s", proc_fn);
 
-	info->lsm_label = lsm_process_label_get(pid);
+	info->lsm_ops = lsm_init();
+
+	info->lsm_label = info->lsm_ops->process_label_get(info->lsm_ops, pid);
 	info->ns_inherited = 0;
-	memset(info->ns_fd, -1, sizeof(int) * LXC_NS_MAX);
+	for (int i = 0; i < LXC_NS_MAX; i++)
+		info->ns_fd[i] = -EBADF;
 
-	return info;
+	return move_ptr(info);
 }
 
 static inline void lxc_proc_close_ns_fd(struct lxc_proc_context_info *ctx)
@@ -135,7 +134,7 @@ static void lxc_proc_put_context_info(struct lxc_proc_context_info *ctx)
  */
 static int in_same_namespace(pid_t pid1, pid_t pid2, const char *ns)
 {
-	__do_close_prot_errno int ns_fd1 = -1, ns_fd2 = -1;
+	__do_close int ns_fd1 = -EBADF, ns_fd2 = -EBADF;
 	int ret = -1;
 	struct stat ns_st1, ns_st2;
 
@@ -172,18 +171,17 @@ static int in_same_namespace(pid_t pid1, pid_t pid2, const char *ns)
 
 static int lxc_attach_to_ns(pid_t pid, struct lxc_proc_context_info *ctx)
 {
-	int i, ret;
+	for (int i = 0; i < LXC_NS_MAX; i++) {
+		int ret;
 
-	for (i = 0; i < LXC_NS_MAX; i++) {
 		if (ctx->ns_fd[i] < 0)
 			continue;
 
 		ret = setns(ctx->ns_fd[i], ns_info[i].clone_flag);
-		if (ret < 0) {
-			SYSERROR("Failed to attach to %s namespace of %d",
-			         ns_info[i].proc_name, pid);
-			return -1;
-		}
+		if (ret < 0)
+			return log_error_errno(-1,
+					       errno, "Failed to attach to %s namespace of %d",
+					       ns_info[i].proc_name, pid);
 
 		DEBUG("Attached to %s namespace of %d", ns_info[i].proc_name, pid);
 	}
@@ -196,64 +194,48 @@ int lxc_attach_remount_sys_proc(void)
 	int ret;
 
 	ret = unshare(CLONE_NEWNS);
-	if (ret < 0) {
-		SYSERROR("Failed to unshare mount namespace");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to unshare mount namespace");
 
-	if (detect_shared_rootfs()) {
-		if (mount(NULL, "/", NULL, MS_SLAVE | MS_REC, NULL)) {
-			SYSERROR("Failed to make / rslave");
-			ERROR("Continuing...");
-		}
-	}
+	if (detect_shared_rootfs() && mount(NULL, "/", NULL, MS_SLAVE | MS_REC, NULL))
+		SYSERROR("Failed to recursively turn root mount tree into dependent mount. Continuing...");
 
 	/* Assume /proc is always mounted, so remount it. */
 	ret = umount2("/proc", MNT_DETACH);
-	if (ret < 0) {
-		SYSERROR("Failed to unmount /proc");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to unmount /proc");
 
-	ret = mount("none", "/proc", "proc", 0, NULL);
-	if (ret < 0) {
-		SYSERROR("Failed to remount /proc");
-		return -1;
-	}
+	ret = mount_filesystem("proc", "/proc", 0);
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to remount /proc");
 
-	/* Try to umount /sys. If it's not a mount point, we'll get EINVAL, then
+	/*
+	 * Try to umount /sys. If it's not a mount point, we'll get EINVAL, then
 	 * we ignore it because it may not have been mounted in the first place.
 	 */
 	ret = umount2("/sys", MNT_DETACH);
-	if (ret < 0 && errno != EINVAL) {
-		SYSERROR("Failed to unmount /sys");
-		return -1;
-	} else if (ret == 0) {
-		/* Remount it. */
-		ret = mount("none", "/sys", "sysfs", 0, NULL);
-		if (ret < 0) {
-			SYSERROR("Failed to remount /sys");
-			return -1;
-		}
-	}
+	if (ret < 0 && errno != EINVAL)
+		return log_error_errno(-1, errno, "Failed to unmount /sys");
+
+	/* Remount it. */
+	if (ret == 0 && mount_filesystem("sysfs", "/sys", 0))
+		return log_error_errno(-1, errno, "Failed to remount /sys");
 
 	return 0;
 }
 
 static int lxc_attach_drop_privs(struct lxc_proc_context_info *ctx)
 {
-	int cap, last_cap;
+	int last_cap;
 
 	last_cap = lxc_caps_last_cap();
-	for (cap = 0; cap <= last_cap; cap++) {
+	for (int cap = 0; cap <= last_cap; cap++) {
 		if (ctx->capability_mask & (1LL << cap))
 			continue;
 
 		if (prctl(PR_CAPBSET_DROP, prctl_arg(cap), prctl_arg(0),
-			  prctl_arg(0), prctl_arg(0))) {
-			SYSERROR("Failed to drop capability %d", cap);
-			return -1;
-		}
+			  prctl_arg(0), prctl_arg(0)))
+			return log_error_errno(-1, errno, "Failed to drop capability %d", cap);
 
 		TRACE("Dropped capability %d", cap);
 	}
@@ -310,8 +292,7 @@ static int lxc_attach_set_environment(struct lxc_proc_context_info *init_ctx,
 				free(extra_keep_store);
 			}
 
-			ERROR("Failed to clear environment");
-			return -1;
+			return log_error(-1, "Failed to clear environment");
 		}
 
 		if (extra_keep_store) {
@@ -343,10 +324,8 @@ static int lxc_attach_set_environment(struct lxc_proc_context_info *init_ctx,
 	}
 
 	ret = putenv("container=lxc");
-	if (ret < 0) {
-		SYSWARN("Failed to set environment variable");
-		return -1;
-	}
+	if (ret < 0)
+		return log_warn(-1, "Failed to set environment variable");
 
 	/* Set container environment variables.*/
 	if (init_ctx && init_ctx->container && init_ctx->container->lxc_conf) {
@@ -358,10 +337,8 @@ static int lxc_attach_set_environment(struct lxc_proc_context_info *init_ctx,
 				return -1;
 
 			ret = putenv(env_tmp);
-			if (ret < 0) {
-				SYSERROR("Failed to set environment variable: %s", (char *)iterator->elem);
-				return -1;
-			}
+			if (ret < 0)
+				return log_error_errno(-1, errno, "Failed to set environment variable: %s", (char *)iterator->elem);
 		}
 	}
 
@@ -388,14 +365,13 @@ static int lxc_attach_set_environment(struct lxc_proc_context_info *init_ctx,
 
 static char *lxc_attach_getpwshell(uid_t uid)
 {
-	__do_free char *line = NULL;
+	__do_free char *line = NULL, *result = NULL;
 	__do_fclose FILE *pipe_f = NULL;
 	int fd, ret;
 	pid_t pid;
 	int pipes[2];
 	bool found = false;
 	size_t line_bufsz = 0;
-	char *result = NULL;
 
 	/* We need to fork off a process that runs the getent program, and we
 	 * need to capture its output, so we use a pipe for that purpose.
@@ -453,7 +429,14 @@ static char *lxc_attach_getpwshell(uid_t uid)
 
 	close(pipes[1]);
 
-	pipe_f = fdopen(pipes[0], "r");
+	pipe_f = fdopen(pipes[0], "re");
+	if (!pipe_f) {
+		close(pipes[0]);
+		goto reap_child;
+	}
+	/* Transfer ownership of pipes[0] to pipe_f. */
+	move_fd(pipes[0]);
+
 	while (getline(&line, &line_bufsz, pipe_f) != -1) {
 		int i;
 		long value;
@@ -505,7 +488,7 @@ static char *lxc_attach_getpwshell(uid_t uid)
 		if (!token)
 			continue;
 
-		free(result);
+		free_disarm(result);
 		result = strdup(token);
 
 		/* Sanity check that there are no fields after that. */
@@ -516,18 +499,15 @@ static char *lxc_attach_getpwshell(uid_t uid)
 		found = true;
 	}
 
+reap_child:
 	ret = wait_for_pid(pid);
-	if (ret < 0) {
-		free(result);
+	if (ret < 0)
 		return NULL;
-	}
 
-	if (!found) {
-		free(result);
+	if (!found)
 		return NULL;
-	}
 
-	return result;
+	return move_ptr(result);
 }
 
 static void lxc_attach_get_init_uidgid(uid_t *init_uid, gid_t *init_gid)
@@ -538,14 +518,14 @@ static void lxc_attach_get_init_uidgid(uid_t *init_uid, gid_t *init_gid)
 	int ret;
 	size_t line_bufsz = 0;
 	long value = -1;
-	uid_t uid = (uid_t)-1;
-	gid_t gid = (gid_t)-1;
+	uid_t uid = LXC_INVALID_UID;
+	gid_t gid = LXC_INVALID_GID;
 
 	ret = snprintf(proc_fn, LXC_PROC_STATUS_LEN, "/proc/%d/status", 1);
 	if (ret < 0 || ret >= LXC_PROC_STATUS_LEN)
 		return;
 
-	proc_file = fopen(proc_fn, "r");
+	proc_file = fopen(proc_fn, "re");
 	if (!proc_file)
 		return;
 
@@ -562,15 +542,15 @@ static void lxc_attach_get_init_uidgid(uid_t *init_uid, gid_t *init_gid)
 				gid = (gid_t)value;
 		}
 
-		if (uid != (uid_t)-1 && gid != (gid_t)-1)
+		if (uid != LXC_INVALID_UID && gid != LXC_INVALID_GID)
 			break;
 	}
 
 	/* Only override arguments if we found something. */
-	if (uid != (uid_t)-1)
+	if (uid != LXC_INVALID_UID)
 		*init_uid = uid;
 
-	if (gid != (gid_t)-1)
+	if (gid != LXC_INVALID_GID)
 		*init_gid = gid;
 
 	/* TODO: we should also parse supplementary groups and use
@@ -586,8 +566,7 @@ static bool fetch_seccomp(struct lxc_container *c, lxc_attach_options_t *options
 
 	if (!(options->namespaces & CLONE_NEWNS) ||
 	    !(options->attach_flags & LXC_ATTACH_LSM)) {
-		free(c->lxc_conf->seccomp.seccomp);
-		c->lxc_conf->seccomp.seccomp = NULL;
+		free_disarm(c->lxc_conf->seccomp.seccomp);
 		return true;
 	}
 
@@ -602,10 +581,8 @@ static bool fetch_seccomp(struct lxc_container *c, lxc_attach_options_t *options
 		INFO("Failed to retrieve lxc.seccomp.profile");
 
 		path = c->get_running_config_item(c, "lxc.seccomp");
-		if (!path) {
-			INFO("Failed to retrieve lxc.seccomp");
-			return true;
-		}
+		if (!path)
+			return log_info(true, "Failed to retrieve lxc.seccomp");
 	}
 
 	/* Copy the value into the new lxc_conf. */
@@ -615,13 +592,10 @@ static bool fetch_seccomp(struct lxc_container *c, lxc_attach_options_t *options
 
 	/* Attempt to parse the resulting config. */
 	ret = lxc_read_seccomp_config(c->lxc_conf);
-	if (ret < 0) {
-		ERROR("Failed to retrieve seccomp policy");
-		return false;
-	}
+	if (ret < 0)
+		return log_error(false, "Failed to retrieve seccomp policy");
 
-	INFO("Retrieved seccomp policy");
-	return true;
+	return log_info(true, "Retrieved seccomp policy");
 }
 
 static bool no_new_privs(struct lxc_container *c, lxc_attach_options_t *options)
@@ -629,17 +603,13 @@ static bool no_new_privs(struct lxc_container *c, lxc_attach_options_t *options)
 	__do_free char *val = NULL;
 
 	/* Remove current setting. */
-	if (!c->set_config_item(c, "lxc.no_new_privs", "")) {
-		INFO("Failed to unset lxc.no_new_privs");
-		return false;
-	}
+	if (!c->set_config_item(c, "lxc.no_new_privs", ""))
+		return log_info(false, "Failed to unset lxc.no_new_privs");
 
 	/* Retrieve currently active setting. */
 	val = c->get_running_config_item(c, "lxc.no_new_privs");
-	if (!val) {
-		INFO("Failed to retrieve lxc.no_new_privs");
-		return false;
-	}
+	if (!val)
+		return log_info(false, "Failed to retrieve lxc.no_new_privs");
 
 	/* Set currently active setting. */
 	return c->set_config_item(c, "lxc.no_new_privs", val);
@@ -658,7 +628,7 @@ static signed long get_personality(const char *name, const char *lxcpath)
 
 struct attach_clone_payload {
 	int ipc_socket;
-	int terminal_slave_fd;
+	int terminal_pts_fd;
 	lxc_attach_options_t *options;
 	struct lxc_proc_context_info *init_ctx;
 	lxc_attach_exec_t exec_function;
@@ -668,7 +638,7 @@ struct attach_clone_payload {
 static void lxc_put_attach_clone_payload(struct attach_clone_payload *p)
 {
 	close_prot_errno_disarm(p->ipc_socket);
-	close_prot_errno_disarm(p->terminal_slave_fd);
+	close_prot_errno_disarm(p->terminal_pts_fd);
 	if (p->init_ctx) {
 		lxc_proc_put_context_info(p->init_ctx);
 		p->init_ctx = NULL;
@@ -803,6 +773,21 @@ static int attach_child_main(struct attach_clone_payload *payload)
 	else
 		new_gid = ns_root_gid;
 
+	if (needs_lsm) {
+		bool on_exec;
+
+		/* Change into our new LSM profile. */
+		on_exec = options->attach_flags & LXC_ATTACH_LSM_EXEC ? true : false;
+
+		ret = init_ctx->lsm_ops->process_label_set_at(init_ctx->lsm_ops, lsm_fd,
+							      init_ctx->lsm_label, on_exec);
+		close(lsm_fd);
+		if (ret < 0)
+			goto on_error;
+
+		TRACE("Set %s LSM label to \"%s\"", init_ctx->lsm_ops->name, init_ctx->lsm_label);
+	}
+
 	if ((init_ctx->container && init_ctx->container->lxc_conf &&
 	     init_ctx->container->lxc_conf->no_new_privs) ||
 	    (options->attach_flags & LXC_ATTACH_NO_NEW_PRIVS)) {
@@ -812,20 +797,6 @@ static int attach_child_main(struct attach_clone_payload *payload)
 			goto on_error;
 
 		TRACE("Set PR_SET_NO_NEW_PRIVS");
-	}
-
-	if (needs_lsm) {
-		bool on_exec;
-
-		/* Change into our new LSM profile. */
-		on_exec = options->attach_flags & LXC_ATTACH_LSM_EXEC ? true : false;
-
-		ret = lsm_process_label_set_at(lsm_fd, init_ctx->lsm_label, on_exec);
-		close(lsm_fd);
-		if (ret < 0)
-			goto on_error;
-
-		TRACE("Set %s LSM label to \"%s\"", lsm_name(), init_ctx->lsm_label);
 	}
 
 	if (init_ctx->container && init_ctx->container->lxc_conf &&
@@ -889,13 +860,13 @@ static int attach_child_main(struct attach_clone_payload *payload)
 	}
 
 	if (options->attach_flags & LXC_ATTACH_TERMINAL) {
-		ret = lxc_terminal_prepare_login(payload->terminal_slave_fd);
+		ret = lxc_terminal_prepare_login(payload->terminal_pts_fd);
 		if (ret < 0) {
-			SYSERROR("Failed to prepare terminal file descriptor %d", payload->terminal_slave_fd);
+			SYSERROR("Failed to prepare terminal file descriptor %d", payload->terminal_pts_fd);
 			goto on_error;
 		}
 
-		TRACE("Prepared terminal file descriptor %d", payload->terminal_slave_fd);
+		TRACE("Prepared terminal file descriptor %d", payload->terminal_pts_fd);
 	}
 
 	/* Avoid unnecessary syscalls. */
@@ -904,6 +875,11 @@ static int attach_child_main(struct attach_clone_payload *payload)
 
 	if (new_gid == ns_root_gid)
 		new_gid = LXC_INVALID_GID;
+
+	/* Make sure that the processes STDIO is correctly owned by the user that we are switching to */
+	ret = fix_stdio_permissions(new_uid);
+	if (ret)
+		WARN("Failed to adjust stdio permissions");
 
 	if (!lxc_switch_uid_gid(new_uid, new_gid))
 		goto on_error;
@@ -916,32 +892,18 @@ on_error:
 	_exit(EXIT_FAILURE);
 }
 
-static int lxc_attach_terminal(struct lxc_conf *conf,
+static int lxc_attach_terminal(const char *name, const char *lxcpath, struct lxc_conf *conf,
 			       struct lxc_terminal *terminal)
 {
 	int ret;
 
 	lxc_terminal_init(terminal);
 
-	ret = lxc_terminal_create(terminal);
-	if (ret < 0) {
-		ERROR("Failed to create terminal");
-		return -1;
-	}
-
-	/* Shift ttys to container. */
-	ret = lxc_terminal_map_ids(conf, terminal);
-	if (ret < 0) {
-		ERROR("Failed to chown terminal");
-		goto on_error;
-	}
+	ret = lxc_terminal_create(name, lxcpath, conf, terminal);
+	if (ret < 0)
+		return log_error(-1, "Failed to create terminal");
 
 	return 0;
-
-on_error:
-	lxc_terminal_delete(terminal);
-	lxc_terminal_conf_free(terminal);
-	return -1;
 }
 
 static int lxc_attach_terminal_mainloop_init(struct lxc_terminal *terminal,
@@ -950,29 +912,26 @@ static int lxc_attach_terminal_mainloop_init(struct lxc_terminal *terminal,
 	int ret;
 
 	ret = lxc_mainloop_open(descr);
-	if (ret < 0) {
-		ERROR("Failed to create mainloop");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error(-1, "Failed to create mainloop");
 
 	ret = lxc_terminal_mainloop_add(descr, terminal);
 	if (ret < 0) {
-		ERROR("Failed to add handlers to mainloop");
 		lxc_mainloop_close(descr);
-		return -1;
+		return log_error(-1, "Failed to add handlers to mainloop");
 	}
 
 	return 0;
 }
 
-static inline void lxc_attach_terminal_close_master(struct lxc_terminal *terminal)
+static inline void lxc_attach_terminal_close_ptx(struct lxc_terminal *terminal)
 {
-	close_prot_errno_disarm(terminal->master);
+	close_prot_errno_disarm(terminal->ptx);
 }
 
-static inline void lxc_attach_terminal_close_slave(struct lxc_terminal *terminal)
+static inline void lxc_attach_terminal_close_pts(struct lxc_terminal *terminal)
 {
-	close_prot_errno_disarm(terminal->slave);
+	close_prot_errno_disarm(terminal->pty);
 }
 
 static inline void lxc_attach_terminal_close_peer(struct lxc_terminal *terminal)
@@ -1001,10 +960,8 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 	struct attach_clone_payload payload = {0};
 
 	ret = access("/proc/self/ns", X_OK);
-	if (ret) {
-		SYSERROR("Does this kernel version support namespaces?");
-		return -1;
-	}
+	if (ret)
+		return log_error_errno(-1, errno, "Does this kernel version support namespaces?");
 
 	if (!container)
 		return ret_set_errno(-1, EINVAL);
@@ -1020,9 +977,8 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 
 	init_pid = lxc_cmd_get_init_pid(name, lxcpath);
 	if (init_pid < 0) {
-		ERROR("Failed to get init pid");
 		lxc_container_put(container);
-		return -1;
+		return log_error(-1, "Failed to get init pid");
 	}
 
 	init_ctx = lxc_proc_get_context_info(init_pid);
@@ -1050,6 +1006,8 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 		}
 	}
 	conf = init_ctx->container->lxc_conf;
+	if (!conf)
+		return log_error_errno(-EINVAL, EINVAL, "Missing container confifg");
 
 	if (!fetch_seccomp(init_ctx->container, options))
 		WARN("Failed to get seccomp policy");
@@ -1124,7 +1082,7 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 	}
 
 	if (options->attach_flags & LXC_ATTACH_TERMINAL) {
-		ret = lxc_attach_terminal(conf, &terminal);
+		ret = lxc_attach_terminal(name, lxcpath, conf, &terminal);
 		if (ret < 0) {
 			ERROR("Failed to setup new terminal");
 			free(cwd);
@@ -1203,7 +1161,7 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 		free(cwd);
 		lxc_proc_close_ns_fd(init_ctx);
 		if (options->attach_flags & LXC_ATTACH_TERMINAL)
-			lxc_attach_terminal_close_slave(&terminal);
+			lxc_attach_terminal_close_pts(&terminal);
 
 		/* Attach to cgroup, if requested. */
 		if (options->attach_flags & LXC_ATTACH_MOVE_TO_CGROUP) {
@@ -1211,15 +1169,15 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 			 * If this is the unified hierarchy cgroup_attach() is
 			 * enough.
 			 */
-			ret = cgroup_attach(name, lxcpath, pid);
+			ret = cgroup_attach(conf, name, lxcpath, pid);
 			if (ret) {
-				__do_cgroup_exit struct cgroup_ops *cgroup_ops = NULL;
+				call_cleaner(cgroup_exit) struct cgroup_ops *cgroup_ops = NULL;
 
 				cgroup_ops = cgroup_init(conf);
 				if (!cgroup_ops)
 					goto on_error;
 
-				if (!cgroup_ops->attach(cgroup_ops, name, lxcpath, pid))
+				if (!cgroup_ops->attach(cgroup_ops, conf, name, lxcpath, pid))
 					goto on_error;
 			}
 			TRACE("Moved intermediate process %d into container's cgroups", pid);
@@ -1287,7 +1245,8 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 
 			ret = -1;
 			on_exec = options->attach_flags & LXC_ATTACH_LSM_EXEC ? true : false;
-			labelfd = lsm_process_label_fd_get(attached_pid, on_exec);
+			labelfd = init_ctx->lsm_ops->process_label_fd_get(init_ctx->lsm_ops,
+									  attached_pid, on_exec);
 			if (labelfd < 0)
 				goto close_mainloop;
 
@@ -1307,7 +1266,7 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 			TRACE("Sent LSM label file descriptor %d to child", labelfd);
 		}
 
-		if (conf && conf->seccomp.seccomp) {
+		if (conf->seccomp.seccomp) {
 			ret = lxc_seccomp_recv_notifier_fd(&conf->seccomp, ipc_sockets[0]);
 			if (ret < 0)
 				goto close_mainloop;
@@ -1363,11 +1322,10 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 	}
 
 	/* close unneeded file descriptors */
-	close(ipc_sockets[0]);
-	ipc_sockets[0] = -EBADF;
+	close_prot_errno_disarm(ipc_sockets[0]);
 
 	if (options->attach_flags & LXC_ATTACH_TERMINAL) {
-		lxc_attach_terminal_close_master(&terminal);
+		lxc_attach_terminal_close_ptx(&terminal);
 		lxc_attach_terminal_close_peer(&terminal);
 		lxc_attach_terminal_close_log(&terminal);
 	}
@@ -1412,7 +1370,7 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 	payload.ipc_socket = ipc_sockets[1];
 	payload.options = options;
 	payload.init_ctx = init_ctx;
-	payload.terminal_slave_fd = terminal.slave;
+	payload.terminal_pts_fd = terminal.pty;
 	payload.exec_function = exec_function;
 	payload.exec_payload = exec_payload;
 
@@ -1442,7 +1400,7 @@ int lxc_attach(struct lxc_container *container, lxc_attach_exec_t exec_function,
 	}
 
 	if (options->attach_flags & LXC_ATTACH_TERMINAL)
-		lxc_attach_terminal_close_slave(&terminal);
+		lxc_attach_terminal_close_pts(&terminal);
 
 	/* Tell grandparent the pid of the pid of the newly created child. */
 	ret = lxc_write_nointr(ipc_sockets[1], &pid, sizeof(pid));
@@ -1482,8 +1440,7 @@ int lxc_attach_run_command(void *payload)
 		}
 	}
 
-	SYSERROR("Failed to exec \"%s\"", cmd->program);
-	return ret;
+	return log_error_errno(ret, errno, "Failed to exec \"%s\"", cmd->program);
 }
 
 int lxc_attach_run_shell(void* payload)

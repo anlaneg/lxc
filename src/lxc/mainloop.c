@@ -34,7 +34,7 @@ int lxc_mainloop(struct lxc_epoll_descr *descr, int timeout_ms)
 			if (errno == EINTR)
 				continue;
 
-			return -1;
+			return -errno;
 		}
 
 		for (i = 0; i < nfds; i++) {
@@ -59,12 +59,14 @@ int lxc_mainloop(struct lxc_epoll_descr *descr, int timeout_ms)
 	}
 }
 
-int lxc_mainloop_add_handler(struct lxc_epoll_descr *descr, int fd,
-			     lxc_mainloop_callback_t callback, void *data)
+int lxc_mainloop_add_handler_events(struct lxc_epoll_descr *descr, int fd,
+				    int events,
+				    lxc_mainloop_callback_t callback,
+				    void *data)
 {
+	__do_free struct mainloop_handler *handler = NULL;
+	__do_free struct lxc_list *item = NULL;
 	struct epoll_event ev;
-	struct mainloop_handler *handler;
-	struct lxc_list *item;
 
 	if (fd < 0)
 		return -1;
@@ -77,23 +79,26 @@ int lxc_mainloop_add_handler(struct lxc_epoll_descr *descr, int fd,
 	handler->fd = fd;
 	handler->data = data;
 
-	ev.events = EPOLLIN;
+	ev.events = events;
 	ev.data.ptr = handler;
 
 	if (epoll_ctl(descr->epfd, EPOLL_CTL_ADD, fd, &ev) < 0)
-		goto out_free_handler;
+		return -errno;
 
 	item = malloc(sizeof(*item));
 	if (!item)
-		goto out_free_handler;
+		return ret_errno(ENOMEM);
 
-	item->elem = handler;
-	lxc_list_add(&descr->handlers, item);
+	item->elem = move_ptr(handler);
+	lxc_list_add(&descr->handlers, move_ptr(item));
 	return 0;
+}
 
-out_free_handler:
-	free(handler);
-	return -1;
+int lxc_mainloop_add_handler(struct lxc_epoll_descr *descr, int fd,
+			     lxc_mainloop_callback_t callback, void *data)
+{
+	return lxc_mainloop_add_handler_events(descr, fd, EPOLLIN, callback,
+					       data);
 }
 
 int lxc_mainloop_del_handler(struct lxc_epoll_descr *descr, int fd)
@@ -107,7 +112,7 @@ int lxc_mainloop_del_handler(struct lxc_epoll_descr *descr, int fd)
 		if (handler->fd == fd) {
 			/* found */
 			if (epoll_ctl(descr->epfd, EPOLL_CTL_DEL, fd, NULL))
-				return -1;
+				return -errno;
 
 			lxc_list_del(iterator);
 			free(iterator->elem);
@@ -116,21 +121,20 @@ int lxc_mainloop_del_handler(struct lxc_epoll_descr *descr, int fd)
 		}
 	}
 
-	return -1;
+	return ret_errno(EINVAL);
 }
 
 int lxc_mainloop_open(struct lxc_epoll_descr *descr)
 {
-	/* hint value passed to epoll create */
 	descr->epfd = epoll_create1(EPOLL_CLOEXEC);
 	if (descr->epfd < 0)
-		return -1;
+		return -errno;
 
 	lxc_list_init(&descr->handlers);
 	return 0;
 }
 
-int lxc_mainloop_close(struct lxc_epoll_descr *descr)
+void lxc_mainloop_close(struct lxc_epoll_descr *descr)
 {
 	struct lxc_list *iterator, *next;
 
@@ -144,8 +148,5 @@ int lxc_mainloop_close(struct lxc_epoll_descr *descr)
 		iterator = next;
 	}
 
-	if (descr->epfd >= 0)
-		return close(descr->epfd);
-
-	return 0;
+	close_prot_errno_disarm(descr->epfd);
 }

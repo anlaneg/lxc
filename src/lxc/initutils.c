@@ -4,20 +4,19 @@
 #define _GNU_SOURCE 1
 #endif
 #include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #include "compiler.h"
 #include "config.h"
 #include "file_utils.h"
 #include "initutils.h"
-#include "log.h"
 #include "macro.h"
 #include "memory_utils.h"
 
 #ifndef HAVE_STRLCPY
 #include "include/strlcpy.h"
 #endif
-
-lxc_log_define(initutils, lxc);
 
 static char *copy_global_config_value(char *p)
 {
@@ -85,13 +84,13 @@ const char *lxc_global_config_value(const char *option_name)
 		sprintf(user_config_path, "%s/.config/lxc/lxc.conf", user_home);
 		sprintf(user_default_config_path, "%s/.config/lxc/default.conf", user_home);
 		sprintf(user_lxc_path, "%s/.local/share/lxc/", user_home);
-		user_cgroup_pattern = strdup("%n");
 	}
 	else {
 		user_config_path = strdup(LXC_GLOBAL_CONF);
 		user_default_config_path = strdup(LXC_DEFAULT_CONFIG);
 		user_lxc_path = strdup(LXCPATH);
-		user_cgroup_pattern = strdup(DEFAULT_CGROUP_PATTERN);
+		if (strcmp(DEFAULT_CGROUP_PATTERN, "") != 0)
+			user_cgroup_pattern = strdup(DEFAULT_CGROUP_PATTERN);
 	}
 
 	const char * const (*ptr)[2];
@@ -181,8 +180,7 @@ const char *lxc_global_config_value(const char *option_name)
 				free(user_lxc_path);
 				user_lxc_path = copy_global_config_value(slider1);
 				remove_trailing_slashes(user_lxc_path);
-				values[i] = user_lxc_path;
-				user_lxc_path = NULL;
+				values[i] = move_ptr(user_lxc_path);
 				goto out;
 			}
 
@@ -196,19 +194,14 @@ const char *lxc_global_config_value(const char *option_name)
 	//没有找到此值，使用user_lxc_path的默认值
 	if (strcmp(option_name, "lxc.lxcpath") == 0) {
 		remove_trailing_slashes(user_lxc_path);
-		values[i] = user_lxc_path;
-		user_lxc_path = NULL;
-	}
-	else if (strcmp(option_name, "lxc.default_config") == 0) {
-		values[i] = user_default_config_path;
-		user_default_config_path = NULL;
-	}
-	else if (strcmp(option_name, "lxc.cgroup.pattern") == 0) {
-		values[i] = user_cgroup_pattern;
-		user_cgroup_pattern = NULL;
-	}
-	else
+		values[i] = move_ptr(user_lxc_path);
+	} else if (strcmp(option_name, "lxc.default_config") == 0) {
+		values[i] = move_ptr(user_default_config_path);
+	} else if (strcmp(option_name, "lxc.cgroup.pattern") == 0) {
+		values[i] = move_ptr(user_cgroup_pattern);
+	} else {
 		values[i] = (*ptr)[1];
+	}
 
 	/* special case: if default value is NULL,
 	 * and there is no config, don't view that
@@ -330,8 +323,6 @@ int setproctitle(char *title)
 		    prctl_arg(sizeof(prctl_map)), prctl_arg(0));
 	if (ret == 0)
 		(void)strlcpy((char *)arg_start, title, len);
-	else
-		SYSWARN("Failed to set cmdline");
 
 	return ret;
 }

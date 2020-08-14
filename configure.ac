@@ -1,13 +1,13 @@
 AC_PREREQ([2.69])
 
 m4_define([lxc_devel], 1)
-m4_define([lxc_version_major], 3)
-m4_define([lxc_version_minor], 2)
-m4_define([lxc_version_micro], 1)
+m4_define([lxc_version_major], 4)
+m4_define([lxc_version_minor], 0)
+m4_define([lxc_version_micro], 0)
 m4_define([lxc_version_beta], [])
 
 m4_define([lxc_abi_major], 1)
-m4_define([lxc_abi_minor], 6)
+m4_define([lxc_abi_minor], 7)
 m4_define([lxc_abi_micro], 0)
 m4_define([lxc_abi], [lxc_abi_major.lxc_abi_minor.lxc_abi_micro])
 
@@ -487,7 +487,7 @@ AC_ARG_WITH([rootfs-path],
 # cgroup pattern specification
 AC_ARG_WITH([cgroup-pattern],
 	[AS_HELP_STRING([--with-cgroup-pattern=pattern], [pattern for container cgroups])],
-	[with_cgroup_pattern=$withval], [with_cgroup_pattern=['lxc.payload.%n']])
+	[with_cgroup_pattern=$withval], [with_cgroup_pattern=['']])
 
 # The path for the apparmor_parser's cache for generated apparmor profiles
 AC_ARG_WITH([apparmor-cache-dir],
@@ -622,7 +622,11 @@ AC_CHECK_HEADER([ifaddrs.h],
 AC_HEADER_MAJOR
 
 # Check for some syscalls functions
-AC_CHECK_FUNCS([setns pivot_root sethostname unshare rand_r confstr faccessat gettid memfd_create])
+AC_CHECK_FUNCS([setns pivot_root sethostname unshare rand_r confstr faccessat gettid memfd_create move_mount open_tree execveat clone3 fsopen fspick fsconfig fsmount, openat2])
+AC_CHECK_TYPES([struct open_how], [], [], [[#include <linux/openat2.h>]])
+AC_CHECK_TYPES([struct clone_args], [], [], [[#include <linux/sched.h>]])
+AC_CHECK_MEMBERS([struct clone_args.set_tid],[],[],[[#include <linux/sched.h>]])
+AC_CHECK_MEMBERS([struct clone_args.cgroup],[],[],[[#include <linux/sched.h>]])
 
 # Check for strerror_r() support. Defines:
 # - HAVE_STRERROR_R if available
@@ -660,7 +664,7 @@ fi
 AC_CHECK_LIB(pthread, main)
 AC_CHECK_FUNCS(statvfs)
 AC_CHECK_LIB(util, openpty)
-AC_CHECK_FUNCS([openpty hasmntopt setmntent endmntent utmpxname])
+AC_CHECK_FUNCS([hasmntopt setmntent endmntent utmpxname])
 AC_CHECK_FUNCS([getgrgid_r],
 	AM_CONDITIONAL(HAVE_GETGRGID_R, true)
 	AC_DEFINE(HAVE_GETGRGID_R,1,[Have getgrgid_r]),
@@ -681,6 +685,10 @@ AC_CHECK_FUNCS([keyctl],
 	AM_CONDITIONAL(HAVE_KEYCTL, true)
 	AC_DEFINE(HAVE_KEYCTL,1,[Have keyctl]),
 	AM_CONDITIONAL(HAVE_KEYCTL, false))
+AC_CHECK_FUNCS([openpty],
+	AM_CONDITIONAL(HAVE_OPENPTY, true)
+	AC_DEFINE(HAVE_OPENPTY,1,[Have openpty]),
+	AM_CONDITIONAL(HAVE_OPENPTY, false))
 AC_CHECK_FUNCS([prlimit],
 	AM_CONDITIONAL(HAVE_PRLIMIT, true)
 	AC_DEFINE(HAVE_PRLIMIT,1,[Have prlimit]),
@@ -701,6 +709,10 @@ AC_CHECK_FUNCS([strlcat],
 	AM_CONDITIONAL(HAVE_STRLCAT, true)
 	AC_DEFINE(HAVE_STRLCAT,1,[Have strlcat]),
 	AM_CONDITIONAL(HAVE_STRLCAT, false))
+AC_CHECK_FUNCS([fmemopen],
+	AM_CONDITIONAL(HAVE_FMEMOPEN, true)
+	AC_DEFINE(HAVE_FMEMOPEN,1,[Have fmemopen]),
+	AM_CONDITIONAL(HAVE_FMEMOPEN, false))
 
 # HAVE_STRUCT_RTNL_LINK_STATS64={0,1}
 AC_CHECK_TYPES([struct rtnl_link_stats64], [], [], [[#include <linux/if_link.h>]])
@@ -749,11 +761,15 @@ AX_CHECK_COMPILE_FLAG([-Wnested-externs], [CFLAGS="$CFLAGS -Wnested-externs"],,[
 AX_CHECK_COMPILE_FLAG([-fasynchronous-unwind-tables], [CFLAGS="$CFLAGS -fasynchronous-unwind-tables"],,[-Werror])
 AX_CHECK_COMPILE_FLAG([-pipe], [CFLAGS="$CFLAGS -pipe"],,[-Werror])
 AX_CHECK_COMPILE_FLAG([-fexceptions], [CFLAGS="$CFLAGS -fexceptions"],,[-Werror])
+AX_CHECK_COMPILE_FLAG([-Warray-bounds], [CFLAGS="$CFLAGS -Warray-bounds"],,[-Werror])
+AX_CHECK_COMPILE_FLAG([-Wrestrict], [CFLAGS="$CFLAGS -Wrestrict"],,[-Werror])
+AX_CHECK_COMPILE_FLAG([-Wreturn-local-addr], [CFLAGS="$CFLAGS -Wreturn-local-addr"],,[-Werror])
+AX_CHECK_COMPILE_FLAG([-Wstringop-overflow], [CFLAGS="$CFLAGS -Wstringop-overflow"],,[-Werror])
 
 AX_CHECK_LINK_FLAG([-z relro], [LDFLAGS="$LDFLAGS -z relro"],,[])
 AX_CHECK_LINK_FLAG([-z now], [LDFLAGS="$LDFLAGS -z now"],,[])
 
-CFLAGS="$CFLAGS -Wvla -std=gnu11"
+CFLAGS="$CFLAGS -Wvla -std=gnu11 -fms-extensions"
 if test "x$enable_werror" = "xyes"; then
 	CFLAGS="$CFLAGS -Werror"
 fi
@@ -762,6 +778,23 @@ AC_ARG_ENABLE([thread-safety],
 	[AS_HELP_STRING([--enable-thread-safety], [enforce thread-safety otherwise fail the build [default=yes]])],
 	[enable_thread_safety=$enableval], [enable_thread_safety=yes])
 AM_CONDITIONAL([ENFORCE_THREAD_SAFETY], [test "x$enable_thread_safety" = "xyes"])
+if test "x$enable_thread_safety" = "xyes"; then
+	AC_DEFINE([ENFORCE_THREAD_SAFETY], 1, [enforce thread-safety otherwise fail the build])
+	AC_MSG_RESULT([yes])
+else
+	AC_MSG_RESULT([no])
+fi
+
+AC_ARG_ENABLE([coverity-build],
+	[AS_HELP_STRING([--enable-coverity-build], [build for use with Coverity [default=no]])],
+	[enable_coverity_build=$enableval], [enable_coverity_build=no])
+AM_CONDITIONAL([ENABLE_COVERITY_BUILD], [test "x$enable_coverity_build" = "xyes"])
+if test "x$enable_coverity_build" = "xyes"; then
+	AC_DEFINE([ENABLE_COVERITY_BUILD], 1, [build for use with Coverity])
+	AC_MSG_RESULT([yes])
+else
+	AC_MSG_RESULT([no])
+fi
 
 AC_ARG_ENABLE([dlog],
 	[AS_HELP_STRING([--enable-dlog], [enable dlog support [default=no]])],
@@ -793,6 +826,8 @@ AC_CONFIG_FILES([
 	lxc.pc
 	lxc.spec
 
+	coccinelle/Makefile
+
 	config/Makefile
 	config/apparmor/Makefile
 	config/apparmor/abstractions/start-container
@@ -807,6 +842,7 @@ AC_CONFIG_FILES([
 	config/init/systemd/lxc.service
 	config/init/systemd/lxc@.service
 	config/init/systemd/lxc-net.service
+	config/init/systemd/lxc-monitord.service
 	config/init/sysvinit/Makefile
 	config/init/sysvinit/lxc-containers
 	config/init/sysvinit/lxc-net
@@ -1031,9 +1067,10 @@ Documentation:
  - user documentation: $enable_doc
 
 Debugging:
- - tests: $enable_tests
  - ASAN: $enable_asan
+ - Coverity: $enable_coverity_build
  - mutex debugging: $enable_mutex_debugging
+ - tests: $enable_tests
 
 Paths:
  - Logs in configpath: $enable_configpath_log

@@ -13,7 +13,8 @@
 #include "file_utils.h"
 #include "macro.h"
 #include "memory_utils.h"
-#include "raw_syscalls.h"
+#include "process_utils.h"
+#include "rexec.h"
 #include "string_utils.h"
 #include "syscall_wrappers.h"
 
@@ -65,7 +66,7 @@ static int parse_argv(char ***argv)
 
 static int is_memfd(void)
 {
-	__do_close_prot_errno int fd = -EBADF;
+	__do_close int fd = -EBADF;
 	int seals;
 
 	fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
@@ -87,8 +88,8 @@ static int is_memfd(void)
 
 static void lxc_rexec_as_memfd(char **argv, char **envp, const char *memfd_name)
 {
-	__do_close_prot_errno int execfd = -EBADF, fd = -EBADF, memfd = -EBADF,
-				  tmpfd = -EBADF;
+	__do_close int execfd = -EBADF, fd = -EBADF, memfd = -EBADF,
+		       tmpfd = -EBADF;
 	int ret;
 	ssize_t bytes_sent = 0;
 	struct stat st = {0};
@@ -143,7 +144,7 @@ static void lxc_rexec_as_memfd(char **argv, char **envp, const char *memfd_name)
 		if (fcntl(memfd, F_ADD_SEALS, LXC_MEMFD_REXEC_SEALS))
 			return;
 
-		execfd = memfd;
+		execfd = move_fd(memfd);
 	} else {
 		char procfd[LXC_PROC_PID_FD_LEN];
 
@@ -169,13 +170,12 @@ extern char **environ;
 
 int lxc_rexec(const char *memfd_name)
 {
+	__do_free_string_list char **argv = NULL;
 	int ret;
-	char **argv = NULL;
 
 	ret = is_memfd();
 	if (ret < 0 && ret == -ENOTRECOVERABLE) {
-		fprintf(stderr,
-			"%s - Failed to determine whether this is a memfd\n",
+		fprintf(stderr, "%s - Failed to determine whether this is a memfd\n",
 			strerror(errno));
 		return -1;
 	} else if (ret > 0) {
@@ -184,8 +184,7 @@ int lxc_rexec(const char *memfd_name)
 
 	ret = parse_argv(&argv);
 	if (ret < 0) {
-		fprintf(stderr,
-			"%s - Failed to parse command line parameters\n",
+		fprintf(stderr, "%s - Failed to parse command line parameters\n",
 			strerror(errno));
 		return -1;
 	}

@@ -3,6 +3,9 @@
 #ifndef __LXC_LOG_H
 #define __LXC_LOG_H
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -13,7 +16,9 @@
 #include <syslog.h>
 #include <time.h>
 
+#include "compiler.h"
 #include "conf.h"
+#include "config.h"
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 02000000
@@ -23,8 +28,8 @@
 #define F_DUPFD_CLOEXEC 1030
 #endif
 
-#define LXC_LOG_PREFIX_SIZE	32
-#define LXC_LOG_BUFFER_SIZE	4096
+#define LXC_LOG_PREFIX_SIZE 32
+#define LXC_LOG_BUFFER_SIZE 4096
 
 /* predefined lxc log priorities. */
 enum lxc_loglevel {
@@ -273,13 +278,13 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 /*
  * Helper macro to define and use static categories.
  */
-#define lxc_log_category_define(name, parent)				\
+#define lxc_log_category_define(name, parent)					\
 	extern struct lxc_log_category lxc_log_category_##parent;	\
 	struct lxc_log_category lxc_log_category_##name = {		\
-		#name,							\
-		LXC_LOG_LEVEL_NOTSET,					\
-		NULL,							\
-		&lxc_log_category_##parent				\
+		#name,								\
+		LXC_LOG_LEVEL_NOTSET,						\
+		NULL,								\
+		&lxc_log_category_##parent					\
 	};
 
 #define lxc_log_define(name, parent)					\
@@ -389,7 +394,7 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 	LXC_FATAL(&locinfo, format, ##__VA_ARGS__);			\
 } while (0)
 
-#if HAVE_M_FORMAT
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
 #define SYSTRACE(format, ...)                              \
 		TRACE("%m - " format, ##__VA_ARGS__)
 #else
@@ -400,7 +405,7 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 	} while (0)
 #endif
 
-#if HAVE_M_FORMAT
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
 #define SYSDEBUG(format, ...)                              \
                 DEBUG("%m - " format, ##__VA_ARGS__)
 #else
@@ -412,7 +417,7 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 #endif
 
 
-#if HAVE_M_FORMAT
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
 #define SYSINFO(format, ...)                              \
                 INFO("%m - " format, ##__VA_ARGS__)
 #else
@@ -423,7 +428,7 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 	} while (0)
 #endif
 
-#if HAVE_M_FORMAT
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
 #define SYSNOTICE(format, ...)                              \
 		NOTICE("%m - " format, ##__VA_ARGS__)
 #else
@@ -434,7 +439,7 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 	} while (0)
 #endif
 
-#if HAVE_M_FORMAT
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
 #define SYSWARN(format, ...)                              \
 		WARN("%m - " format, ##__VA_ARGS__)
 #else
@@ -445,7 +450,7 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 	} while (0)
 #endif
 
-#if HAVE_M_FORMAT
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
 #define SYSERROR(format, ...)                              \
 		ERROR("%m - " format, ##__VA_ARGS__)
 #else
@@ -456,97 +461,119 @@ __lxc_unused static inline void LXC_##LEVEL(struct lxc_log_locinfo* locinfo,	\
 	} while (0)
 #endif
 
-#if HAVE_M_FORMAT
-#define CMD_SYSERROR(format, ...)                                    \
-		fprintf(stderr, "%m - " format, ##__VA_ARGS__)
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
+#define CMD_SYSERROR(format, ...)                                             \
+	fprintf(stderr, "%s: %d: %s - %m - " format "\n", __FILE__, __LINE__, \
+		__func__, ##__VA_ARGS__);
 #else
-#define CMD_SYSERROR(format, ...)                                    \
-	do {                                                         \
-		lxc_log_strerror_r;                                  \
-		fprintf(stderr, "%s - " format, ptr, ##__VA_ARGS__); \
+#define CMD_SYSERROR(format, ...)                                           \
+	do {                                                                \
+		lxc_log_strerror_r;                                         \
+		fprintf(stderr, "%s: %d: %s - %s - " format "\n", __FILE__, \
+			__LINE__, __func__, ptr, ##__VA_ARGS__);            \
 	} while (0)
 #endif
 
-#if HAVE_M_FORMAT
-#define CMD_SYSINFO(format, ...)                            \
-		printf("%m - " format, ##__VA_ARGS__)
+#if HAVE_M_FORMAT && !ENABLE_COVERITY_BUILD
+#define CMD_SYSINFO(format, ...)                                               \
+	printf("%s: %d: %s - %m - " format "\n", __FILE__, __LINE__, __func__, \
+	       ##__VA_ARGS__);
 #else
-#define CMD_SYSINFO(format, ...)                            \
-	do {                                                \
-		lxc_log_strerror_r;                         \
-		printf("%s - " format, ptr, ##__VA_ARGS__); \
+#define CMD_SYSINFO(format, ...)                                             \
+	do {                                                                 \
+		lxc_log_strerror_r;                                          \
+		printf("%s: %d: %s - %s - " format "\n", __FILE__, __LINE__, \
+		       __func__, ptr, ##__VA_ARGS__);                        \
 	} while (0)
 #endif
 
-#define log_error_errno(__ret__, __errno__, format, ...) \
-	({						 \
-		errno = __errno__;			 \
-		SYSERROR(format, ##__VA_ARGS__);	 \
-		__ret__;				 \
+#define log_error_errno(__ret__, __errno__, format, ...)      \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		errno = (__errno__);                          \
+		SYSERROR(format, ##__VA_ARGS__);              \
+		__internal_ret__;                             \
 	})
 
-#define log_error(__ret__, format, ...)	      \
-	({				      \
-		ERROR(format, ##__VA_ARGS__); \
-		__ret__;		      \
+#define log_error(__ret__, format, ...)                       \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		ERROR(format, ##__VA_ARGS__);                 \
+		__internal_ret__;                             \
 	})
 
-#define log_trace_errno(__ret__, __errno__, format, ...) \
-	({                                               \
-		errno = __errno__;			 \
-		SYSTRACE(format, ##__VA_ARGS__);         \
-		__ret__;                                 \
+#define log_trace_errno(__ret__, __errno__, format, ...)      \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		errno = __errno__;                            \
+		SYSTRACE(format, ##__VA_ARGS__);              \
+		__internal_ret__;                             \
 	})
 
-#define log_trace(__ret__, format, ...)	      \
-	({                                    \
-		TRACE(format, ##__VA_ARGS__); \
-		__ret__;                      \
+#define log_trace(__ret__, format, ...)                       \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		TRACE(format, ##__VA_ARGS__);                 \
+		__internal_ret__;                             \
 	})
 
-#define log_warn_errno(__ret__, __errno__, format, ...) \
-	({						\
-		errno = __errno__;			\
-		SYSWARN(format, ##__VA_ARGS__);		\
-		__ret__;				\
+#define log_warn_errno(__ret__, __errno__, format, ...)       \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		errno = __errno__;                            \
+		SYSWARN(format, ##__VA_ARGS__);               \
+		__internal_ret__;                             \
 	})
 
-#define log_debug_errno(__ret__, __errno__, format, ...) \
-	({						 \
-		errno = __errno__;		         \
-		SYSDEBUG(format, ##__VA_ARGS__);	 \
-		__ret__;				 \
+#define log_warn(__ret__, format, ...)                        \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		WARN(format, ##__VA_ARGS__);                  \
+		__internal_ret__;                             \
 	})
 
-#define log_debug(__ret__, format, ...)	      \
-	({				      \
-		DEBUG(format, ##__VA_ARGS__); \
-		__ret__;		      \
+#define log_debug_errno(__ret__, __errno__, format, ...)      \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		errno = __errno__;                            \
+		SYSDEBUG(format, ##__VA_ARGS__);              \
+		__internal_ret__;                             \
 	})
 
-#define log_info_errno(__ret__, __errno__, format, ...) \
-	({                                              \
-		errno = __errno__;                      \
-		SYSINFO(format, ##__VA_ARGS__);         \
-		__ret__;                                \
+#define log_debug(__ret__, format, ...)                       \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		DEBUG(format, ##__VA_ARGS__);                 \
+		__internal_ret__;                             \
 	})
 
-#define log_info(__ret__, format, ...)       \
-	({                                   \
-		INFO(format, ##__VA_ARGS__); \
-		__ret__;                     \
+#define log_info_errno(__ret__, __errno__, format, ...)       \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		errno = __errno__;                            \
+		SYSINFO(format, ##__VA_ARGS__);               \
+		__internal_ret__;                             \
+	})
+
+#define log_info(__ret__, format, ...)                        \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		INFO(format, ##__VA_ARGS__);                  \
+		__internal_ret__;                             \
 	})
 
 extern int lxc_log_fd;
 
-extern int lxc_log_syslog(int facility);
-extern void lxc_log_enable_syslog(void);
-extern int lxc_log_set_level(int *dest, int level);
-extern int lxc_log_get_level(void);
-extern bool lxc_log_has_valid_level(void);
-extern int lxc_log_set_file(int *fd, const char *fname);
-extern const char *lxc_log_get_file(void);
-extern void lxc_log_set_prefix(const char *prefix);
-extern const char *lxc_log_get_prefix(void);
-extern void lxc_log_options_no_override(void);
-#endif
+__hidden extern int lxc_log_syslog(int facility);
+__hidden extern void lxc_log_syslog_enable(void);
+__hidden extern void lxc_log_syslog_disable(void);
+__hidden extern int lxc_log_set_level(int *dest, int level);
+__hidden extern int lxc_log_get_level(void);
+__hidden extern bool lxc_log_has_valid_level(void);
+__hidden extern int lxc_log_set_file(int *fd, const char *fname);
+__hidden extern const char *lxc_log_get_file(void);
+__hidden extern void lxc_log_set_prefix(const char *prefix);
+__hidden extern const char *lxc_log_get_prefix(void);
+__hidden extern void lxc_log_options_no_override(void);
+
+#endif /* __LXC_LOG_H */

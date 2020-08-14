@@ -39,41 +39,36 @@ int lxc_cmd_sock_rcv_state(int state_client_fd, int timeout)
 		out.tv_sec = timeout;
 		ret = setsockopt(state_client_fd, SOL_SOCKET, SO_RCVTIMEO,
 				(const void *)&out, sizeof(out));
-		if (ret < 0) {
-			SYSERROR("Failed to set %ds timeout on container "
-				 "state socket",
-				 timeout);
-			return -1;
-		}
+		if (ret < 0)
+			return log_error_errno(-1, errno, "Failed to set %ds timeout on container state socket", timeout);
 	}
 
 	memset(&msg, 0, sizeof(msg));
 
 	ret = lxc_recv_nointr(state_client_fd, &msg, sizeof(msg), 0);
-	if (ret < 0) {
-		SYSERROR("Failed to receive message");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to receive message");
 
-	TRACE("Received state %s from state client %d",
-	      lxc_state2str(msg.value), state_client_fd);
-
-	return msg.value;
+	return log_trace(msg.value, "Received state %s from state client %d",
+			 lxc_state2str(msg.value), state_client_fd);
 }
 
 /* Register a new state client and retrieve state from command socket. */
 int lxc_cmd_sock_get_state(const char *name, const char *lxcpath,
 			   lxc_state_t states[MAX_STATE], int timeout)
 {
-	__do_close_prot_errno int state_client_fd = -EBADF;
+	__do_close int state_client_fd = -EBADF;
 	int ret;
 
 	ret = lxc_cmd_add_state_client(name, lxcpath, states, &state_client_fd);
 	if (ret < 0)
-		return -1;
+		return ret_errno(EINVAL);
 
 	if (ret < MAX_STATE)
 		return ret;
+
+	if (state_client_fd < 0)
+		return ret_errno(EBADF);
 
 	return lxc_cmd_sock_rcv_state(state_client_fd, timeout);
 }
@@ -111,49 +106,38 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 
 	if (hashed_sock_name != NULL) {
 		ret = snprintf(offset, len, "lxc/%s/%s", hashed_sock_name, suffix);
-		if (ret < 0 || ret >= len) {
-			ERROR("Failed to create abstract socket name");
-			return -1;
-		}
+		if (ret < 0 || (size_t)ret >= len)
+			return log_error_errno(-1, errno, "Failed to create abstract socket name");
 		return 0;
 	}
 
 	if (!lxcpath) {
 	    //如未指定lxcpath，则自配置中获取
 		lxcpath = lxc_global_config_value("lxc.lxcpath");
-		if (!lxcpath) {
-			ERROR("Failed to allocate memory");
-			return -1;
-		}
+		if (!lxcpath)
+			return log_error(-1, "Failed to allocate memory");
 	}
 
 	//填充路径
 	ret = snprintf(offset, len, "%s/%s/%s", lxcpath, name, suffix);
-	if (ret < 0) {
-		ERROR("Failed to create abstract socket name");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to create abstract socket name");
 
-	//如果格式化后长度不超过buffer，则直接返回
-	if (ret < len)
-		return 0;
+	/*
+	 * ret >= len. This means lxcpath and name are too long. We need to
+	 * hash both.
+	 */
+	if (ret >= len) {
+		tmplen = strlen(name) + strlen(lxcpath) + 2;
+		tmppath = must_realloc(NULL, tmplen);
+		ret = snprintf(tmppath, tmplen, "%s/%s", lxcpath, name);
+		if (ret < 0 || (size_t)ret >= tmplen)
+			return log_error_errno(-1, errno, "Failed to create abstract socket name");
 
-	//长度超过len时，将lxcpath+name这部分通过sha-1全部生成hashcode
-	//并重新生成另一种较短格式的路径
-	/* ret >= len; lxcpath or name is too long.  hash both */
-	tmplen = strlen(name) + strlen(lxcpath) + 2;
-	tmppath = must_realloc(NULL, tmplen);
-	ret = snprintf(tmppath, tmplen, "%s/%s", lxcpath, name);
-	if (ret < 0 || (size_t)ret >= tmplen) {
-		ERROR("Failed to create abstract socket name");
-		return -1;
-	}
-
-	hash = fnv_64a_buf(tmppath, ret, FNV1A_64_INIT);
-	ret = snprintf(offset, len, "lxc/%016" PRIx64 "/%s", hash, suffix);
-	if (ret < 0 || ret >= len) {
-		ERROR("Failed to create abstract socket name");
-		return -1;
+		hash = fnv_64a_buf(tmppath, ret, FNV1A_64_INIT);
+		ret = snprintf(offset, len, "lxc/%016" PRIx64 "/%s", hash, suffix);
+		if (ret < 0 || (size_t)ret >= len)
+			return log_error_errno(-1, errno, "Failed to create abstract socket name");
 	}
 
 	return 0;
@@ -208,8 +192,8 @@ int lxc_add_state_client(int state_client_fd, struct lxc_handler *handler,
 		return state;
 	}
 
-	TRACE("Added state client %d to state client list", state_client_fd);
 	move_ptr(newclient);
 	move_ptr(tmplist);
+	TRACE("Added state client fd %d to state client list", state_client_fd);
 	return MAX_STATE;
 }

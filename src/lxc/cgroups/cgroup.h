@@ -7,11 +7,15 @@
 #include <stddef.h>
 #include <sys/types.h>
 
+#include "compiler.h"
 #include "macro.h"
+#include "memory_utils.h"
 
 #define DEFAULT_CGROUP_MOUNTPOINT "/sys/fs/cgroup"
 #define DEFAULT_PAYLOAD_CGROUP_PREFIX "lxc.payload."
 #define DEFAULT_MONITOR_CGROUP_PREFIX "lxc.monitor."
+#define DEFAULT_PAYLOAD_CGROUP "payload"
+#define DEFAULT_MONITOR_CGROUP "monitor"
 #define CGROUP_CREATE_RETRY "-NNNN"
 #define CGROUP_CREATE_RETRY_LEN (STRLITERALLEN(CGROUP_CREATE_RETRY))
 #define CGROUP_PIVOT "lxc.pivot"
@@ -51,7 +55,11 @@ typedef enum {
  *   init's cgroup (if root).
  *
  * @container_full_path
- * - The full path to the containers cgroup.
+ * - The full path to the container's cgroup.
+ *
+ * @container_limit_path
+ * - The full path to the container's limiting cgroup. May simply point to
+ *   container_full_path.
  *
  * @monitor_full_path
  * - The full path to the monitor's cgroup.
@@ -74,15 +82,18 @@ struct hierarchy {
 	char *mountpoint;
 	char *container_base_path;
 	char *container_full_path;
+	char *container_limit_path;
 	char *monitor_full_path;
 	int version;
 
 	/* cgroup2 only */
 	unsigned int bpf_device_controller:1;
 
-	/* monitor cgroup fd */
-	int cgfd_con;
 	/* container cgroup fd */
+	int cgfd_con;
+	/* limiting cgroup fd (may be equal to cgfd_con if not separated) */
+	int cgfd_limit;
+	/* monitor cgroup fd */
 	int cgfd_mon;
 };
 
@@ -157,36 +168,39 @@ struct cgroup_ops {
 				    struct lxc_conf *conf, bool with_devices);
 	bool (*setup_limits)(struct cgroup_ops *ops, struct lxc_handler *handler);
 	bool (*chown)(struct cgroup_ops *ops, struct lxc_conf *conf);
-	bool (*attach)(struct cgroup_ops *ops, const char *name,
-		       const char *lxcpath, pid_t pid);
+	bool (*attach)(struct cgroup_ops *ops, const struct lxc_conf *conf,
+		       const char *name, const char *lxcpath, pid_t pid);
 	bool (*mount)(struct cgroup_ops *ops, struct lxc_handler *handler,
 		      const char *root, int type);
-	int (*nrtasks)(struct cgroup_ops *ops);
 	bool (*devices_activate)(struct cgroup_ops *ops,
 				 struct lxc_handler *handler);
 	bool (*monitor_delegate_controllers)(struct cgroup_ops *ops);
 	bool (*payload_delegate_controllers)(struct cgroup_ops *ops);
 	void (*payload_finalize)(struct cgroup_ops *ops);
+	const char *(*get_limiting_cgroup)(struct cgroup_ops *ops, const char *controller);
 };
 
-extern struct cgroup_ops *cgroup_init(struct lxc_conf *conf);
-extern void cgroup_exit(struct cgroup_ops *ops);
+__hidden extern struct cgroup_ops *cgroup_init(struct lxc_conf *conf);
 
-extern void prune_init_scope(char *cg);
+__hidden extern void cgroup_exit(struct cgroup_ops *ops);
+define_cleanup_function(struct cgroup_ops *, cgroup_exit);
 
-static inline void __auto_cgroup_exit__(struct cgroup_ops **ops)
-{
-	if (*ops)
-		cgroup_exit(*ops);
-}
+__hidden extern void prune_init_scope(char *cg);
 
-extern int cgroup_attach(const char *name, const char *lxcpath, int64_t pid);
-
-#define __do_cgroup_exit __attribute__((__cleanup__(__auto_cgroup_exit__)))
+__hidden extern int cgroup_attach(const struct lxc_conf *conf, const char *name,
+				  const char *lxcpath, pid_t pid);
 
 static inline bool pure_unified_layout(const struct cgroup_ops *ops)
 {
 	return ops->cgroup_layout == CGROUP_LAYOUT_UNIFIED;
 }
 
-#endif
+static inline int cgroup_unified_fd(const struct cgroup_ops *ops)
+{
+	if (!ops->unified)
+		return -EBADF;
+
+	return ops->unified->cgfd_con;
+}
+
+#endif /* __LXC_CGROUP_H */

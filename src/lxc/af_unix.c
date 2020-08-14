@@ -14,10 +14,12 @@
 #include <sys/syscall.h>
 #include <sys/un.h>
 
+#include "af_unix.h"
 #include "config.h"
 #include "log.h"
+#include "macro.h"
 #include "memory_utils.h"
-#include "raw_syscalls.h"
+#include "process_utils.h"
 #include "utils.h"
 
 #ifndef HAVE_STRLCPY
@@ -28,14 +30,12 @@ lxc_log_define(af_unix, lxc);
 
 //构造unix地址
 static ssize_t lxc_abstract_unix_set_sockaddr(struct sockaddr_un *addr,
-				const char *path)
+					      const char *path)
 {
 	size_t len;
 
-	if (!addr || !path) {
-		errno = EINVAL;
-		return -1;
-	}
+	if (!addr || !path)
+		return ret_errno(EINVAL);
 
 	/* Clear address structure */
 	memset(addr, 0, sizeof(*addr));
@@ -45,10 +45,8 @@ static ssize_t lxc_abstract_unix_set_sockaddr(struct sockaddr_un *addr,
 	len = strlen(&path[1]);
 
 	/* do not enforce \0-termination */
-	if (len >= INT_MAX || len >= sizeof(addr->sun_path)) {
-		errno = ENAMETOOLONG;
-		return -1;
-	}
+	if (len >= INT_MAX || len >= sizeof(addr->sun_path))
+		return ret_errno(ENAMETOOLONG);
 
 	/* do not enforce \0-termination */
 	memcpy(&addr->sun_path[1], &path[1], len);
@@ -58,7 +56,8 @@ static ssize_t lxc_abstract_unix_set_sockaddr(struct sockaddr_un *addr,
 //打开af_unix,如果path未指定，则直接返回fd,否则完成服务端bind及监听
 int lxc_abstract_unix_open(const char *path, int type, int flags)
 {
-	int fd, ret;
+	__do_close int fd = -EBADF;
+	int ret;
 	ssize_t len;
 	struct sockaddr_un addr;
 
@@ -67,38 +66,26 @@ int lxc_abstract_unix_open(const char *path, int type, int flags)
 		return -1;
 
 	if (!path)
-	    //未指定fd时，直接返回fd
-		return fd;
+	    	//未指定fd时，直接返回fd
+		return move_fd(fd);
 
 	len = lxc_abstract_unix_set_sockaddr(&addr, path);
-	if (len < 0) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
+	if (len < 0)
 		return -1;
-	}
 
 	//绑定并监听
 	ret = bind(fd, (struct sockaddr *)&addr,
 		   offsetof(struct sockaddr_un, sun_path) + len + 1);
-	if (ret < 0) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
+	if (ret < 0)
 		return -1;
-	}
 
 	if (type == SOCK_STREAM) {
 		ret = listen(fd, 100);
-		if (ret < 0) {
-			int saved_errno = errno;
-			close(fd);
-			errno = saved_errno;
+		if (ret < 0)
 			return -1;
-		}
 	}
 
-	return fd;
+	return move_fd(fd);
 }
 
 void lxc_abstract_unix_close(int fd)
@@ -108,7 +95,8 @@ void lxc_abstract_unix_close(int fd)
 
 int lxc_abstract_unix_connect(const char *path)
 {
-	int fd, ret;
+	__do_close int fd = -EBADF;
+	int ret;
 	ssize_t len;
 	struct sockaddr_un addr;
 
@@ -117,23 +105,15 @@ int lxc_abstract_unix_connect(const char *path)
 		return -1;
 
 	len = lxc_abstract_unix_set_sockaddr(&addr, path);
-	if (len < 0) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
+	if (len < 0)
 		return -1;
-	}
 
 	ret = connect(fd, (struct sockaddr *)&addr,
 		      offsetof(struct sockaddr_un, sun_path) + len + 1);
-	if (ret < 0) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
+	if (ret < 0)
 		return -1;
-	}
 
-	return fd;
+	return move_fd(fd);
 }
 
 int lxc_abstract_unix_send_fds_iov(int fd, int *sendfds, int num_sendfds,
@@ -168,11 +148,9 @@ int lxc_abstract_unix_send_fds_iov(int fd, int *sendfds, int num_sendfds,
 	msg.msg_iov = iov;
 	msg.msg_iovlen = iovlen;
 
-again:
-	ret = sendmsg(fd, &msg, MSG_NOSIGNAL);
-	if (ret < 0)
-		if (errno == EINTR)
-			goto again;
+	do {
+		ret = sendmsg(fd, &msg, MSG_NOSIGNAL);
+	} while (ret < 0 && errno == EINTR);
 
 	return ret;
 }
@@ -185,8 +163,7 @@ int lxc_abstract_unix_send_fds(int fd, int *sendfds, int num_sendfds,
 		.iov_base = data ? data : buf,
 		.iov_len = data ? size : sizeof(buf),
 	};
-	return lxc_abstract_unix_send_fds_iov(fd, sendfds, num_sendfds, &iov,
-					      1);
+	return lxc_abstract_unix_send_fds_iov(fd, sendfds, num_sendfds, &iov, 1);
 }
 
 int lxc_unix_send_fds(int fd, int *sendfds, int num_sendfds, void *data,
@@ -201,17 +178,14 @@ static int lxc_abstract_unix_recv_fds_iov(int fd, int *recvfds, int num_recvfds,
 	__do_free char *cmsgbuf = NULL;
 	int ret;
 	struct msghdr msg;
-	struct cmsghdr *cmsg = NULL;
 	size_t cmsgbufsize = CMSG_SPACE(sizeof(struct ucred)) +
 			     CMSG_SPACE(num_recvfds * sizeof(int));
 
 	memset(&msg, 0, sizeof(msg));
 
 	cmsgbuf = malloc(cmsgbufsize);
-	if (!cmsgbuf) {
-		errno = ENOMEM;
-		return -1;
-	}
+	if (!cmsgbuf)
+		return ret_errno(ENOMEM);
 
 	msg.msg_control = cmsgbuf;
 	msg.msg_controllen = cmsgbufsize;
@@ -219,21 +193,16 @@ static int lxc_abstract_unix_recv_fds_iov(int fd, int *recvfds, int num_recvfds,
 	msg.msg_iov = iov;
 	msg.msg_iovlen = iovlen;
 
-again:
-	ret = recvmsg(fd, &msg, 0);
-	if (ret < 0) {
-		if (errno == EINTR)
-			goto again;
-
-		goto out;
-	}
-	if (ret == 0)
-		goto out;
+	do {
+		ret = recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
+	} while (ret < 0 && errno == EINTR);
+	if (ret < 0 || ret == 0)
+		return ret;
 
 	/*
 	 * If SO_PASSCRED is set we will always get a ucred message.
 	 */
-	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+	for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		if (cmsg->cmsg_type != SCM_RIGHTS)
 			continue;
 
@@ -245,7 +214,6 @@ again:
 		break;
 	}
 
-out:
 	return ret;
 }
 
@@ -266,7 +234,9 @@ int lxc_abstract_unix_send_credential(int fd, void *data, size_t size)
 	struct iovec iov;
 	struct cmsghdr *cmsg;
 	struct ucred cred = {
-	    .pid = lxc_raw_getpid(), .uid = getuid(), .gid = getgid(),
+		.pid = lxc_raw_getpid(),
+		.uid = getuid(),
+		.gid = getgid(),
 	};
 	char cmsgbuf[CMSG_SPACE(sizeof(cred))] = {0};
 	char buf[1] = {0};
@@ -313,7 +283,7 @@ int lxc_abstract_unix_rcv_credential(int fd, void *data, size_t size)
 
 	ret = recvmsg(fd, &msg, 0);
 	if (ret <= 0)
-		goto out;
+		return ret;
 
 	cmsg = CMSG_FIRSTHDR(&msg);
 
@@ -321,15 +291,13 @@ int lxc_abstract_unix_rcv_credential(int fd, void *data, size_t size)
 	    cmsg->cmsg_level == SOL_SOCKET &&
 	    cmsg->cmsg_type == SCM_CREDENTIALS) {
 		memcpy(&cred, CMSG_DATA(cmsg), sizeof(cred));
-		if (cred.uid &&
-		    (cred.uid != getuid() || cred.gid != getgid())) {
-			INFO("Message denied for '%d/%d'", cred.uid, cred.gid);
-			errno = EACCES;
-			return -1;
-		}
+
+		if (cred.uid && (cred.uid != getuid() || cred.gid != getgid()))
+			return log_error_errno(-1, EACCES,
+					       "Message denied for '%d/%d'",
+					       cred.uid, cred.gid);
 	}
 
-out:
 	return ret;
 }
 
@@ -363,15 +331,14 @@ int lxc_unix_sockaddr(struct sockaddr_un *ret, const char *path)
 
 int lxc_unix_connect_type(struct sockaddr_un *addr, int type)
 {
-	__do_close_prot_errno int fd = -EBADF;
+	__do_close int fd = -EBADF;
 	int ret;
 	ssize_t len;
 
 	fd = socket(AF_UNIX, type | SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		SYSERROR("Failed to open new AF_UNIX socket");
-		return -1;
-	}
+	if (fd < 0)
+		return log_error_errno(-1, errno,
+				       "Failed to open new AF_UNIX socket");
 
 	if (addr->sun_path[0] == '\0')
 		len = strlen(&addr->sun_path[1]);
@@ -380,15 +347,14 @@ int lxc_unix_connect_type(struct sockaddr_un *addr, int type)
 
 	ret = connect(fd, (struct sockaddr *)addr,
 		      offsetof(struct sockaddr_un, sun_path) + len);
-	if (ret < 0) {
-		SYSERROR("Failed to bind new AF_UNIX socket");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno,
+				       "Failed to bind new AF_UNIX socket");
 
 	return move_fd(fd);
 }
 
-int lxc_unix_connect(struct sockaddr_un *addr, int type)
+int lxc_unix_connect(struct sockaddr_un *addr)
 {
 	return lxc_unix_connect_type(addr, SOCK_STREAM);
 }

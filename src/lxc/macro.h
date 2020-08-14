@@ -367,6 +367,34 @@ extern int __build_bug_on_failed;
 #define IPVLAN_ISOLATION_VEPA 2
 #endif
 
+#ifndef BRIDGE_VLAN_NONE
+#define BRIDGE_VLAN_NONE -1 /* Bridge VLAN option set to "none". */
+#endif
+
+#ifndef BRIDGE_VLAN_ID_MAX
+#define BRIDGE_VLAN_ID_MAX 4094 /* Bridge VLAN MAX VLAN ID. */
+#endif
+
+#ifndef BRIDGE_FLAGS_MASTER
+#define BRIDGE_FLAGS_MASTER 1 /* Bridge command to/from parent */
+#endif
+
+#ifndef BRIDGE_VLAN_INFO_PVID
+#define BRIDGE_VLAN_INFO_PVID (1<<1) /* VLAN is PVID, ingress untagged */
+#endif
+
+#ifndef BRIDGE_VLAN_INFO_UNTAGGED
+#define BRIDGE_VLAN_INFO_UNTAGGED (1<<2) /* VLAN egresses untagged */
+#endif
+
+#ifndef IFLA_BRIDGE_FLAGS
+#define IFLA_BRIDGE_FLAGS 0
+#endif
+
+#ifndef IFLA_BRIDGE_VLAN_INFO
+#define IFLA_BRIDGE_VLAN_INFO 2
+#endif
+
 /* Attributes of RTM_NEWNSID/RTM_GETNSID messages */
 enum {
 	__LXC_NETNSA_NONE,
@@ -415,10 +443,13 @@ enum {
 #define PTR_TO_INT(p) ((int)((intptr_t)(p)))
 #define INT_TO_PTR(u) ((void *)((intptr_t)(u)))
 
-#define PTR_TO_INTMAX(p) ((intmax_t)((intptr_t)(p)))
-#define INTMAX_TO_PTR(u) ((void *)((intptr_t)(u)))
+#define PTR_TO_PID(p) ((pid_t)((intptr_t)(p)))
+#define PID_TO_PTR(u) ((void *)((intptr_t)(u)))
 
 #define PTR_TO_UINT64(p) ((uint64_t)((intptr_t)(p)))
+
+#define UINT_TO_PTR(u) ((void *) ((uintptr_t) (u)))
+#define PTR_TO_USHORT(p) ((unsigned short)((uintptr_t)(p)))
 
 #define LXC_INVALID_UID ((uid_t)-1)
 #define LXC_INVALID_GID ((gid_t)-1)
@@ -443,24 +474,23 @@ enum {
 		__internal_fd__;            \
 	})
 
-#define ret_set_errno(__ret__, __errno__) \
-	({                                \
-		errno = __errno__;        \
-		__ret__;                  \
+#define ret_set_errno(__ret__, __errno__)                     \
+	({                                                    \
+		typeof(__ret__) __internal_ret__ = (__ret__); \
+		errno = (__errno__);                          \
+		__internal_ret__;                             \
 	})
 
-#define ret_errno(__errno__)       \
-	({                         \
-		errno = __errno__; \
-		-__errno__;        \
+#define ret_errno(__errno__)         \
+	({                           \
+		errno = (__errno__); \
+		-(__errno__);        \
 	})
 
-#define free_replace_move_ptr(a, b) \
-	({                          \
-		free(a);            \
-		(a) = (b);          \
-		(b) = NULL;         \
-		0;                  \
+#define free_move_ptr(a, b)          \
+	({                           \
+		free(a);             \
+		(a) = move_ptr((b)); \
 	})
 
 /* Container's specific file/directory names */
@@ -474,5 +504,13 @@ enum {
 	(__builtin_choose_expr(!__builtin_types_compatible_p(typeof(x),      \
 							     typeof(&*(x))), \
 			       sizeof(x) / sizeof((x)[0]), ((void)0)))
+
+#ifndef TIOCGPTPEER
+	#if defined __sparc__
+		#define TIOCGPTPEER _IO('t', 137)
+	#else
+		#define TIOCGPTPEER _IO('T', 0x41)
+	#endif
+#endif
 
 #endif /* __LXC_MACRO_H */

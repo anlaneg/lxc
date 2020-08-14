@@ -29,7 +29,7 @@ struct rbd_args {
 	const char *size;
 };
 
-int rbd_create_wrapper(void *data)
+static int rbd_create_wrapper(void *data)
 {
 	struct rbd_args *args = data;
 
@@ -39,7 +39,7 @@ int rbd_create_wrapper(void *data)
 	return -1;
 }
 
-int rbd_map_wrapper(void *data)
+static int rbd_map_wrapper(void *data)
 {
 	struct rbd_args *args = data;
 
@@ -49,7 +49,7 @@ int rbd_map_wrapper(void *data)
 	return -1;
 }
 
-int rbd_unmap_wrapper(void *data)
+static int rbd_unmap_wrapper(void *data)
 {
 	struct rbd_args *args = data;
 
@@ -58,7 +58,7 @@ int rbd_unmap_wrapper(void *data)
 	return -1;
 }
 
-int rbd_delete_wrapper(void *data)
+static int rbd_delete_wrapper(void *data)
 {
 	struct rbd_args *args = data;
 
@@ -77,7 +77,7 @@ int rbd_clonepaths(struct lxc_storage *orig, struct lxc_storage *new,
 }
 
 int rbd_create(struct lxc_storage *bdev, const char *dest, const char *n,
-	       struct bdev_specs *specs)
+	       struct bdev_specs *specs, const struct lxc_conf *conf)
 {
 	const char *rbdpool, *fstype;
 	uint64_t size;

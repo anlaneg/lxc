@@ -27,9 +27,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "af_unix.h"
 #include "caps.h"
 #include "cgroup.h"
 #include "cgroup2_devices.h"
@@ -54,19 +56,6 @@
 
 lxc_log_define(cgfsng, cgroup);
 
-static void free_string_list(char **clist)
-{
-	int i;
-
-	if (!clist)
-		return;
-
-	for (i = 0; clist[i]; i++)
-		free(clist[i]);
-
-	free(clist);
-}
-
 /* Given a pointer to a null-terminated array of pointers, realloc to add one
  * entry, and point the new entry to NULL. Do not fail. Return the index to the
  * second-to-last entry - that is, the one which is now available for use
@@ -90,12 +79,10 @@ static int append_null_to_list(void ***list)
  */
 static bool string_in_list(char **list, const char *entry)
 {
-	int i;
-
 	if (!list)
 		return false;
 
-	for (i = 0; list[i]; i++)
+	for (int i = 0; list[i]; i++)
 		if (strcmp(list[i], entry) == 0)
 			return true;
 
@@ -158,18 +145,12 @@ static void must_append_controller(char **klist, char **nlist, char ***clist,
 /* Given a handler's cgroup data, return the struct hierarchy for the controller
  * @c, or NULL if there is none.
  */
-struct hierarchy *get_hierarchy(struct cgroup_ops *ops, const char *controller)
+static struct hierarchy *get_hierarchy(struct cgroup_ops *ops, const char *controller)
 {
-	int i;
+	if (!ops->hierarchies)
+		return log_trace_errno(NULL, errno, "There are no useable cgroup controllers");
 
-	errno = ENOENT;
-
-	if (!ops->hierarchies) {
-		TRACE("There are no useable cgroup controllers");
-		return NULL;
-	}
-
-	for (i = 0; ops->hierarchies[i]; i++) {
+	for (int i = 0; ops->hierarchies[i]; i++) {
 		if (!controller) {
 			/* This is the empty unified hierarchy. */
 			if (ops->hierarchies[i]->controllers &&
@@ -192,7 +173,7 @@ struct hierarchy *get_hierarchy(struct cgroup_ops *ops, const char *controller)
 	else
 		WARN("There is no empty unified cgroup hierarchy");
 
-	return NULL;
+	return ret_set_errno(NULL, ENOENT);
 }
 
 #define BATCH_SIZE 50
@@ -201,9 +182,8 @@ static void batch_realloc(char **mem, size_t oldlen, size_t newlen)
 	int newbatches = (newlen / BATCH_SIZE) + 1;
 	int oldbatches = (oldlen / BATCH_SIZE) + 1;
 
-	if (!*mem || newbatches > oldbatches) {
+	if (!*mem || newbatches > oldbatches)
 		*mem = must_realloc(*mem, newbatches * BATCH_SIZE);
-	}
 }
 
 static void append_line(char **dest, size_t oldlen, char *new, size_t newlen)
@@ -218,20 +198,21 @@ static void append_line(char **dest, size_t oldlen, char *new, size_t newlen)
 /* Slurp in a whole file */
 static char *read_file(const char *fnam)
 {
-	__do_free char *line = NULL;
+	__do_free char *buf = NULL, *line = NULL;
 	__do_fclose FILE *f = NULL;
-	int linelen;
-	char *buf = NULL;
 	size_t len = 0, fulllen = 0;
+	int linelen;
 
-	f = fopen(fnam, "r");
+	f = fopen(fnam, "re");
 	if (!f)
 		return NULL;
+
 	while ((linelen = getline(&line, &len, f)) != -1) {
 		append_line(&buf, fulllen, line, linelen);
 		fulllen += linelen;
 	}
-	return buf;
+
+	return move_ptr(buf);
 }
 
 /* Taken over modified from the kernel sources. */
@@ -264,9 +245,9 @@ static bool is_set(unsigned bit, uint32_t *bitarr)
  */
 static uint32_t *lxc_cpumask(char *buf, size_t nbits)
 {
+	__do_free uint32_t *bitarr = NULL;
 	char *token;
 	size_t arrlen;
-	__do_free uint32_t *bitarr = NULL;
 
 	arrlen = BITS_TO_LONGS(nbits);
 	bitarr = calloc(arrlen, sizeof(uint32_t));
@@ -300,36 +281,27 @@ static uint32_t *lxc_cpumask(char *buf, size_t nbits)
 /* Turn cpumask into simple, comma-separated cpulist. */
 static char *lxc_cpumask_to_cpulist(uint32_t *bitarr, size_t nbits)
 {
-	int ret;
-	size_t i;
-	char *tmp = NULL;
-	char **cpulist = NULL;
+	__do_free_string_list char **cpulist = NULL;
 	char numstr[INTTYPE_TO_STRLEN(size_t)] = {0};
+	int ret;
 
-	for (i = 0; i <= nbits; i++) {
+	for (size_t i = 0; i <= nbits; i++) {
 		if (!is_set(i, bitarr))
 			continue;
 
 		ret = snprintf(numstr, sizeof(numstr), "%zu", i);
-		if (ret < 0 || (size_t)ret >= sizeof(numstr)) {
-			lxc_free_array((void **)cpulist, free);
+		if (ret < 0 || (size_t)ret >= sizeof(numstr))
 			return NULL;
-		}
 
 		ret = lxc_append_string(&cpulist, numstr);
-		if (ret < 0) {
-			lxc_free_array((void **)cpulist, free);
+		if (ret < 0)
 			return ret_set_errno(NULL, ENOMEM);
-		}
 	}
 
 	if (!cpulist)
 		return ret_set_errno(NULL, ENOMEM);
 
-	tmp = lxc_string_join(",", (const char **)cpulist, false);
-	lxc_free_array((void **)cpulist, free);
-
-	return tmp;
+	return lxc_string_join(",", (const char **)cpulist, false);
 }
 
 static ssize_t get_max_cpus(char *cpulist)
@@ -491,26 +463,22 @@ static bool copy_parent_file(const char *parent_cgroup,
 	parent_file = must_make_path(parent_cgroup, file, NULL);
 	len = lxc_read_from_file(parent_file, NULL, 0);
 	if (len <= 0)
-		return log_error_errno(false, errno,
-				       "Failed to determine buffer size");
+		return log_error_errno(false, errno, "Failed to determine buffer size");
 
 	value = must_realloc(NULL, len + 1);
 	value[len] = '\0';
 	ret = lxc_read_from_file(parent_file, value, len);
 	if (ret != len)
-		return log_error_errno(false, errno,
-				       "Failed to read from parent file \"%s\"",
-				       parent_file);
+		return log_error_errno(false, errno, "Failed to read from parent file \"%s\"", parent_file);
 
 	ret = lxc_write_openat(child_cgroup, file, value, len);
 	if (ret < 0 && errno != EACCES)
-		return log_error_errno(false,
-				       errno, "Failed to write \"%s\" to file \"%s/%s\"",
+		return log_error_errno(false, errno, "Failed to write \"%s\" to file \"%s/%s\"",
 				       value, child_cgroup, file);
 	return true;
 }
 
-static bool is_unified_hierarchy(const struct hierarchy *h)
+static inline bool is_unified_hierarchy(const struct hierarchy *h)
 {
 	return h->version == CGROUP2_SUPER_MAGIC;
 }
@@ -528,7 +496,7 @@ static int cg_legacy_handle_cpuset_hierarchy(struct hierarchy *h,
 					     const char *cgroup_leaf)
 {
 	__do_free char *parent_cgroup = NULL, *child_cgroup = NULL, *dup = NULL;
-	__do_close_prot_errno int cgroup_fd = -EBADF;
+	__do_close int cgroup_fd = -EBADF;
 	int fret = -1;
 	int ret;
 	char v;
@@ -600,15 +568,12 @@ static int cg_legacy_handle_cpuset_hierarchy(struct hierarchy *h,
  */
 static bool controller_lists_intersect(char **l1, char **l2)
 {
-	int i;
-
 	if (!l1 || !l2)
 		return false;
 
-	for (i = 0; l1[i]; i++) {
+	for (int i = 0; l1[i]; i++)
 		if (string_in_list(l2, l1[i]))
 			return true;
-	}
 
 	return false;
 }
@@ -619,12 +584,10 @@ static bool controller_lists_intersect(char **l1, char **l2)
  */
 static bool controller_list_is_dup(struct hierarchy **hlist, char **clist)
 {
-	int i;
-
 	if (!hlist)
 		return false;
 
-	for (i = 0; hlist[i]; i++)
+	for (int i = 0; hlist[i]; i++)
 		if (controller_lists_intersect(hlist[i]->controllers, clist))
 			return true;
 
@@ -636,12 +599,10 @@ static bool controller_list_is_dup(struct hierarchy **hlist, char **clist)
  */
 static bool controller_found(struct hierarchy **hlist, char *entry)
 {
-	int i;
-
 	if (!hlist)
 		return false;
 
-	for (i = 0; hlist[i]; i++)
+	for (int i = 0; hlist[i]; i++)
 		if (string_in_list(hlist[i]->controllers, entry))
 			return true;
 
@@ -653,17 +614,15 @@ static bool controller_found(struct hierarchy **hlist, char *entry)
  */
 static bool all_controllers_found(struct cgroup_ops *ops)
 {
-	char **cur;
-	struct hierarchy **hlist = ops->hierarchies;
+	struct hierarchy **hlist;
 
 	if (!ops->cgroup_use)
 		return true;
 
-	for (cur = ops->cgroup_use; cur && *cur; cur++)
-		if (!controller_found(hlist, *cur)) {
-			ERROR("No %s controller mountpoint found", *cur);
-			return false;
-		}
+	hlist = ops->hierarchies;
+	for (char **cur = ops->cgroup_use; cur && *cur; cur++)
+		if (!controller_found(hlist, *cur))
+			return log_error(false, "No %s controller mountpoint found", *cur);
 
 	return true;
 }
@@ -679,10 +638,10 @@ static char **cg_hybrid_get_controllers(char **klist, char **nlist, char *line,
 	/* The fourth field is /sys/fs/cgroup/comma-delimited-controller-list
 	 * for legacy hierarchies.
 	 */
+	__do_free_string_list char **aret = NULL;
 	int i;
 	char *p2, *tok;
 	char *p = line, *sep = ",";
-	char **aret = NULL;
 
 	for (i = 0; i < 4; i++) {
 		p = strchr(p, ' ');
@@ -694,17 +653,13 @@ static char **cg_hybrid_get_controllers(char **klist, char **nlist, char *line,
 	/* Note, if we change how mountinfo works, then our caller will need to
 	 * verify /sys/fs/cgroup/ in this field.
 	 */
-	if (strncmp(p, DEFAULT_CGROUP_MOUNTPOINT "/", 15) != 0) {
-		ERROR("Found hierarchy not under " DEFAULT_CGROUP_MOUNTPOINT ": \"%s\"", p);
-		return NULL;
-	}
+	if (strncmp(p, DEFAULT_CGROUP_MOUNTPOINT "/", 15) != 0)
+		return log_error(NULL, "Found hierarchy not under " DEFAULT_CGROUP_MOUNTPOINT ": \"%s\"", p);
 
 	p += 15;
 	p2 = strchr(p, ' ');
-	if (!p2) {
-		ERROR("Corrupt mountinfo");
-		return NULL;
-	}
+	if (!p2)
+		return log_error(NULL, "Corrupt mountinfo");
 	*p2 = '\0';
 
 	if (type == CGROUP_SUPER_MAGIC) {
@@ -718,29 +673,29 @@ static char **cg_hybrid_get_controllers(char **klist, char **nlist, char *line,
 		if (!dup)
 			return NULL;
 
-		lxc_iterate_parts (tok, dup, sep)
+		lxc_iterate_parts(tok, dup, sep)
 			must_append_controller(klist, nlist, &aret, tok);
 	}
 	*p2 = ' ';
 
-	return aret;
+	return move_ptr(aret);
 }
 
 static char **cg_unified_make_empty_controller(void)
 {
+	__do_free_string_list char **aret = NULL;
 	int newentry;
-	char **aret = NULL;
 
 	newentry = append_null_to_list((void ***)&aret);
 	aret[newentry] = NULL;
-	return aret;
+	return move_ptr(aret);
 }
 
 static char **cg_unified_get_controllers(const char *file)
 {
 	__do_free char *buf = NULL;
+	__do_free_string_list char **aret = NULL;
 	char *sep = " \t\n";
-	char **aret = NULL;
 	char *tok;
 
 	buf = read_file(file);
@@ -756,7 +711,7 @@ static char **cg_unified_get_controllers(const char *file)
 		aret[newentry] = copy;
 	}
 
-	return aret;
+	return move_ptr(aret);
 }
 
 static struct hierarchy *add_hierarchy(struct hierarchy ***h, char **clist, char *mountpoint,
@@ -771,6 +726,7 @@ static struct hierarchy *add_hierarchy(struct hierarchy ***h, char **clist, char
 	new->container_base_path = container_base_path;
 	new->version = type;
 	new->cgfd_con = -EBADF;
+	new->cgfd_limit = -EBADF;
 	new->cgfd_mon = -EBADF;
 
 	newentry = append_null_to_list((void ***)h);
@@ -783,12 +739,11 @@ static struct hierarchy *add_hierarchy(struct hierarchy ***h, char **clist, char
  */
 static char *cg_hybrid_get_mountpoint(char *line)
 {
-	int i;
+	char *p = line, *sret = NULL;
 	size_t len;
 	char *p2;
-	char *p = line, *sret = NULL;
 
-	for (i = 0; i < 4; i++) {
+	for (int i = 0; i < 4; i++) {
 		p = strchr(p, ' ');
 		if (!p)
 			return NULL;
@@ -807,15 +762,17 @@ static char *cg_hybrid_get_mountpoint(char *line)
 	sret = must_realloc(NULL, len + 1);
 	memcpy(sret, p, len);
 	sret[len] = '\0';
+
 	return sret;
 }
 
 /* Given a multi-line string, return a null-terminated copy of the current line. */
 static char *copy_to_eol(char *p)
 {
-	char *p2 = strchr(p, '\n'), *sret;
+	char *p2, *sret;
 	size_t len;
 
+	p2 = strchr(p, '\n');
 	if (!p2)
 		return NULL;
 
@@ -823,6 +780,7 @@ static char *copy_to_eol(char *p)
 	sret = must_realloc(NULL, len + 1);
 	memcpy(sret, p, len);
 	sret[len] = '\0';
+
 	return sret;
 }
 
@@ -902,7 +860,7 @@ static int get_existing_subsystems(char ***klist, char ***nlist)
 	__do_fclose FILE *f = NULL;
 	size_t len = 0;
 
-	f = fopen("/proc/self/cgroup", "r");
+	f = fopen("/proc/self/cgroup", "re");
 	if (!f)
 		return -1;
 
@@ -940,13 +898,15 @@ static int get_existing_subsystems(char ***klist, char ***nlist)
 	return 0;
 }
 
-static void trim(char *s)
+static char *trim(char *s)
 {
 	size_t len;
 
 	len = strlen(s);
 	while ((len > 1) && (s[len - 1] == '\n'))
 		s[--len] = '\0';
+
+	return s;
 }
 
 static void lxc_cgfsng_print_hierarchies(struct cgroup_ops *ops)
@@ -988,25 +948,25 @@ static void lxc_cgfsng_print_basecg_debuginfo(char *basecginfo, char **klist,
 		TRACE("named subsystem %d: %s", k, *it);
 }
 
-static int cgroup_rmdir(struct hierarchy **hierarchies,
-			const char *container_cgroup)
+static int cgroup_tree_remove(struct hierarchy **hierarchies, const char *container_cgroup)
 {
 	if (!container_cgroup || !hierarchies)
 		return 0;
 
 	for (int i = 0; hierarchies[i]; i++) {
-		int ret;
 		struct hierarchy *h = hierarchies[i];
+		int ret;
 
-		if (!h->container_full_path)
+		if (!h->container_limit_path)
 			continue;
 
-		ret = recursive_destroy(h->container_full_path);
+		ret = lxc_rm_rf(h->container_limit_path);
 		if (ret < 0)
-			WARN("Failed to destroy \"%s\"", h->container_full_path);
+			WARN("Failed to destroy \"%s\"", h->container_limit_path);
 
-		free(h->container_full_path);
-		h->container_full_path = NULL;
+		if (h->container_limit_path != h->container_full_path)
+			free_disarm(h->container_limit_path);
+		free_disarm(h->container_full_path);
 	}
 
 	return 0;
@@ -1020,7 +980,7 @@ struct generic_userns_exec_data {
 	char *path;
 };
 
-static int cgroup_rmdir_wrapper(void *data)
+static int cgroup_tree_remove_wrapper(void *data)
 {
 	struct generic_userns_exec_data *arg = data;
 	uid_t nsuid = (arg->conf->root_nsuid_map != NULL) ? 0 : arg->conf->init_uid;
@@ -1032,17 +992,15 @@ static int cgroup_rmdir_wrapper(void *data)
 
 	ret = setresgid(nsgid, nsgid, nsgid);
 	if (ret < 0)
-		return log_error_errno(-1, errno,
-				       "Failed to setresgid(%d, %d, %d)",
+		return log_error_errno(-1, errno, "Failed to setresgid(%d, %d, %d)",
 				       (int)nsgid, (int)nsgid, (int)nsgid);
 
 	ret = setresuid(nsuid, nsuid, nsuid);
 	if (ret < 0)
-		return log_error_errno(-1, errno,
-				       "Failed to setresuid(%d, %d, %d)",
+		return log_error_errno(-1, errno, "Failed to setresuid(%d, %d, %d)",
 				       (int)nsuid, (int)nsuid, (int)nsuid);
 
-	return cgroup_rmdir(arg->hierarchies, arg->container_cgroup);
+	return cgroup_tree_remove(arg->hierarchies, arg->container_cgroup);
 }
 
 __cgfsng_ops static void cgfsng_payload_destroy(struct cgroup_ops *ops,
@@ -1050,17 +1008,23 @@ __cgfsng_ops static void cgfsng_payload_destroy(struct cgroup_ops *ops,
 {
 	int ret;
 
-	if (!ops)
-		log_error_errno(return, ENOENT, "Called with uninitialized cgroup operations");
+	if (!ops) {
+		ERROR("Called with uninitialized cgroup operations");
+		return;
+	}
 
 	if (!ops->hierarchies)
 		return;
 
-	if (!handler)
-		log_error_errno(return, EINVAL, "Called with uninitialized handler");
+	if (!handler) {
+		ERROR("Called with uninitialized handler");
+		return;
+	}
 
-	if (!handler->conf)
-		log_error_errno(return, EINVAL, "Called with uninitialized conf");
+	if (!handler->conf) {
+		ERROR("Called with uninitialized conf");
+		return;
+	}
 
 #ifdef HAVE_STRUCT_BPF_CGROUP_DEV_CTX
 	ret = bpf_program_cgroup_detach(handler->conf->cgroup2_devices);
@@ -1070,18 +1034,18 @@ __cgfsng_ops static void cgfsng_payload_destroy(struct cgroup_ops *ops,
 
 	if (handler->conf && !lxc_list_empty(&handler->conf->id_map)) {
 		struct generic_userns_exec_data wrap = {
-		    .origuid = 0,
-		    .container_cgroup = ops->container_cgroup,
-		    .hierarchies = ops->hierarchies,
-		    .conf = handler->conf,
+			.conf			= handler->conf,
+			.container_cgroup	= ops->container_cgroup,
+			.hierarchies		= ops->hierarchies,
+			.origuid		= 0,
 		};
-		ret = userns_exec_1(handler->conf, cgroup_rmdir_wrapper, &wrap,
-				    "cgroup_rmdir_wrapper");
+		ret = userns_exec_1(handler->conf, cgroup_tree_remove_wrapper,
+				    &wrap, "cgroup_tree_remove_wrapper");
 	} else {
-		ret = cgroup_rmdir(ops->hierarchies, ops->container_cgroup);
+		ret = cgroup_tree_remove(ops->hierarchies, ops->container_cgroup);
 	}
 	if (ret < 0)
-		log_warn_errno(return, errno, "Failed to destroy cgroups");
+		SYSWARN("Failed to destroy cgroups");
 }
 
 __cgfsng_ops static void cgfsng_monitor_destroy(struct cgroup_ops *ops,
@@ -1091,17 +1055,23 @@ __cgfsng_ops static void cgfsng_monitor_destroy(struct cgroup_ops *ops,
 	char pidstr[INTTYPE_TO_STRLEN(pid_t)];
 	const struct lxc_conf *conf;
 
-	if (!ops)
-		log_error_errno(return, ENOENT, "Called with uninitialized cgroup operations");
+	if (!ops) {
+		ERROR("Called with uninitialized cgroup operations");
+		return;
+	}
 
 	if (!ops->hierarchies)
 		return;
 
-	if (!handler)
-		log_error_errno(return, EINVAL, "Called with uninitialized handler");
+	if (!handler) {
+		ERROR("Called with uninitialized handler");
+		return;
+	}
 
-	if (!handler->conf)
-		log_error_errno(return, EINVAL, "Called with uninitialized conf");
+	if (!handler->conf) {
+		ERROR("Called with uninitialized conf");
+		return;
+	}
 	conf = handler->conf;
 
 	len = snprintf(pidstr, sizeof(pidstr), "%d", handler->monitor_pid);
@@ -1111,34 +1081,47 @@ __cgfsng_ops static void cgfsng_monitor_destroy(struct cgroup_ops *ops,
 	for (int i = 0; ops->hierarchies[i]; i++) {
 		__do_free char *pivot_path = NULL;
 		struct hierarchy *h = ops->hierarchies[i];
+		size_t offset;
 		int ret;
 
 		if (!h->monitor_full_path)
 			continue;
 
-		if (conf && conf->cgroup_meta.dir)
-			pivot_path = must_make_path(h->mountpoint,
-						    h->container_base_path,
-						    conf->cgroup_meta.dir,
-						    CGROUP_PIVOT, NULL);
+		/* Monitor might have died before we entered the cgroup. */
+		if (handler->monitor_pid <= 0) {
+			WARN("No valid monitor process found while destroying cgroups");
+			goto try_lxc_rm_rf;
+		}
+
+		if (conf && conf->cgroup_meta.monitor_dir)
+			pivot_path = must_make_path(h->mountpoint, h->container_base_path,
+						    conf->cgroup_meta.monitor_dir, CGROUP_PIVOT, NULL);
+		else if (conf && conf->cgroup_meta.dir)
+			pivot_path = must_make_path(h->mountpoint, h->container_base_path,
+						    conf->cgroup_meta.dir, CGROUP_PIVOT, NULL);
 		else
-			pivot_path = must_make_path(h->mountpoint,
-						    h->container_base_path,
+			pivot_path = must_make_path(h->mountpoint, h->container_base_path,
 						    CGROUP_PIVOT, NULL);
+
+		offset = strlen(h->mountpoint) + strlen(h->container_base_path);
+
+		if (cg_legacy_handle_cpuset_hierarchy(h, pivot_path + offset))
+			SYSWARN("Failed to initialize cpuset %s/" CGROUP_PIVOT, pivot_path);
 
 		ret = mkdir_p(pivot_path, 0755);
-		if (ret < 0 && errno != EEXIST)
-			log_error_errno(goto try_recursive_destroy, errno,
-					"Failed to create %s", pivot_path);
+		if (ret < 0 && errno != EEXIST) {
+			ERROR("Failed to create %s", pivot_path);
+			goto try_lxc_rm_rf;
+		}
 
 		ret = lxc_write_openat(pivot_path, "cgroup.procs", pidstr, len);
-		if (ret != 0)
-			log_warn_errno(continue, errno,
-				       "Failed to move monitor %s to \"%s\"",
-				       pidstr, pivot_path);
+		if (ret != 0) {
+			SYSWARN("Failed to move monitor %s to \"%s\"", pidstr, pivot_path);
+			continue;
+		}
 
-try_recursive_destroy:
-		ret = recursive_destroy(h->monitor_full_path);
+try_lxc_rm_rf:
+		ret = lxc_rm_rf(h->monitor_full_path);
 		if (ret < 0)
 			WARN("Failed to destroy \"%s\"", h->monitor_full_path);
 	}
@@ -1159,28 +1142,25 @@ static int mkdir_eexist_on_last(const char *dir, mode_t mode)
 		dir = tmp + strspn(tmp, "/");
 		tmp = dir + strcspn(dir, "/");
 
-		errno = ENOMEM;
 		cur_len = dir - orig;
 		makeme = strndup(orig, cur_len);
 		if (!makeme)
-			return -1;
+			return ret_set_errno(-1, ENOMEM);
 
 		ret = mkdir(makeme, mode);
-		if (ret < 0) {
-			if ((errno != EEXIST) || (orig_len == cur_len)) {
-				SYSERROR("Failed to create directory \"%s\"", makeme);
-				return -1;
-			}
-		}
+		if (ret < 0 && ((errno != EEXIST) || (orig_len == cur_len)))
+			return log_warn_errno(-1, errno, "Failed to create directory \"%s\"", makeme);
 	} while (tmp != dir);
 
 	return 0;
 }
 
-static bool create_cgroup_tree(struct hierarchy *h, const char *cgroup_tree,
-			       const char *cgroup_leaf, bool payload)
+static bool cgroup_tree_create(struct cgroup_ops *ops, struct lxc_conf *conf,
+			       struct hierarchy *h, const char *cgroup_tree,
+			       const char *cgroup_leaf, bool payload,
+			       const char *cgroup_limit_dir)
 {
-	__do_free char *path = NULL;
+	__do_free char *path = NULL, *limit_path = NULL;
 	int ret, ret_cpuset;
 
 	path = must_make_path(h->mountpoint, h->container_base_path, cgroup_leaf, NULL);
@@ -1191,6 +1171,35 @@ static bool create_cgroup_tree(struct hierarchy *h, const char *cgroup_tree,
 	if (ret_cpuset < 0)
 		return log_error_errno(false, errno, "Failed to handle legacy cpuset controller");
 
+	if (payload && cgroup_limit_dir) {
+		/* with isolation both parts need to not already exist */
+		limit_path = must_make_path(h->mountpoint,
+					    h->container_base_path,
+					    cgroup_limit_dir, NULL);
+
+		ret = mkdir_eexist_on_last(limit_path, 0755);
+		if (ret < 0)
+			return log_debug_errno(false,
+					      errno, "Failed to create %s limiting cgroup",
+					      limit_path);
+
+		h->cgfd_limit = lxc_open_dirfd(limit_path);
+		if (h->cgfd_limit < 0)
+			return log_error_errno(false, errno,
+					       "Failed to open %s", path);
+		h->container_limit_path = move_ptr(limit_path);
+
+		/*
+		 * With isolation the devices legacy cgroup needs to be
+		 * iinitialized early, as it typically contains an 'a' (all)
+		 * line, which is not possible once a subdirectory has been
+		 * created.
+		 */
+		if (string_in_list(h->controllers, "devices") &&
+		    !ops->setup_limits_legacy(ops, conf, true))
+			return log_error(false, "Failed to setup legacy device limits");
+	}
+
 	ret = mkdir_eexist_on_last(path, 0755);
 	if (ret < 0) {
 		/*
@@ -1199,7 +1208,7 @@ static bool create_cgroup_tree(struct hierarchy *h, const char *cgroup_tree,
 		 * directory for us to ensure correct initialization.
 		 */
 		if (ret_cpuset != 1 || cgroup_tree)
-			return log_error_errno(false, errno, "Failed to create %s cgroup", path);
+			return log_debug_errno(false, errno, "Failed to create %s cgroup", path);
 	}
 
 	if (payload) {
@@ -1207,6 +1216,10 @@ static bool create_cgroup_tree(struct hierarchy *h, const char *cgroup_tree,
 		if (h->cgfd_con < 0)
 			return log_error_errno(false, errno, "Failed to open %s", path);
 		h->container_full_path = move_ptr(path);
+		if (h->cgfd_limit < 0)
+			h->cgfd_limit = h->cgfd_con;
+		if (!h->container_limit_path)
+			h->container_limit_path = h->container_full_path;
 	} else {
 		h->cgfd_mon = lxc_open_dirfd(path);
 		if (h->cgfd_mon < 0)
@@ -1217,38 +1230,66 @@ static bool create_cgroup_tree(struct hierarchy *h, const char *cgroup_tree,
 	return true;
 }
 
-static void cgroup_remove_leaf(struct hierarchy *h, bool payload)
+static void cgroup_tree_leaf_remove(struct hierarchy *h, bool payload)
 {
-	__do_free char *full_path = NULL;
+	__do_free char *full_path = NULL, *__limit_path = NULL;
+	char *limit_path = NULL;
 
 	if (payload) {
-		__lxc_unused __do_close_prot_errno int fd = move_fd(h->cgfd_con);
-		h->cgfd_con = -EBADF;
-		full_path = h->container_full_path;
+		__lxc_unused __do_close int fd = move_fd(h->cgfd_con);
+		full_path = move_ptr(h->container_full_path);
+		limit_path = move_ptr(h->container_limit_path);
+		if (limit_path != full_path)
+			__limit_path = limit_path;
 	} else {
-		__lxc_unused __do_close_prot_errno int fd = move_fd(h->cgfd_mon);
-		h->cgfd_mon = -EBADF;
-		full_path = h->monitor_full_path;
+		__lxc_unused __do_close int fd = move_fd(h->cgfd_mon);
+		full_path = move_ptr(h->monitor_full_path);
 	}
 
-	if (rmdir(full_path))
+	if (full_path && rmdir(full_path))
 		SYSWARN("Failed to rmdir(\"%s\") cgroup", full_path);
-
-	if (payload)
-		h->container_full_path = NULL;
-	else
-		h->monitor_full_path = NULL;
+	if (limit_path && rmdir(limit_path))
+		SYSWARN("Failed to rmdir(\"%s\") cgroup", limit_path);
 }
 
-__cgfsng_ops static inline bool cgfsng_monitor_create(struct cgroup_ops *ops,
-						      struct lxc_handler *handler)
+/*
+ * Check we have no lxc.cgroup.dir, and that lxc.cgroup.dir.limit_prefix is a
+ * proper prefix directory of lxc.cgroup.dir.payload.
+ *
+ * Returns the prefix length if it is set, otherwise zero on success.
+ */
+static bool check_cgroup_dir_config(struct lxc_conf *conf)
 {
-	__do_free char *monitor_cgroup = NULL;
+	const char *monitor_dir = conf->cgroup_meta.monitor_dir,
+		   *container_dir = conf->cgroup_meta.container_dir,
+		   *namespace_dir = conf->cgroup_meta.namespace_dir;
+
+	/* none of the new options are set, all is fine */
+	if (!monitor_dir && !container_dir && !namespace_dir)
+		return true;
+
+	/* some are set, make sure lxc.cgroup.dir is not also set*/
+	if (conf->cgroup_meta.dir)
+		return log_error_errno(false, EINVAL,
+			"lxc.cgroup.dir conflicts with lxc.cgroup.dir.payload/monitor");
+
+	/* make sure both monitor and payload are set */
+	if (!monitor_dir || !container_dir)
+		return log_error_errno(false, EINVAL,
+			"lxc.cgroup.dir.payload and lxc.cgroup.dir.monitor must both be set");
+
+	/* namespace_dir may be empty */
+	return true;
+}
+
+__cgfsng_ops static bool cgfsng_monitor_create(struct cgroup_ops *ops, struct lxc_handler *handler)
+{
+	__do_free char *monitor_cgroup = NULL, *__cgroup_tree = NULL;
 	const char *cgroup_tree;
 	int idx = 0;
 	int i;
 	size_t len;
-	char *suffix;
+	char *suffix = NULL;
 	struct lxc_conf *conf;
 
 	if (!ops)
@@ -1264,41 +1305,62 @@ __cgfsng_ops static inline bool cgfsng_monitor_create(struct cgroup_ops *ops,
 		return ret_set_errno(false, EINVAL);
 
 	conf = handler->conf;
-	cgroup_tree = conf->cgroup_meta.dir;
 
-	if (cgroup_tree)
+	if (!check_cgroup_dir_config(conf))
+		return false;
+
+	if (conf->cgroup_meta.monitor_dir) {
+		cgroup_tree = NULL;
+		monitor_cgroup = strdup(conf->cgroup_meta.monitor_dir);
+	} else if (conf->cgroup_meta.dir) {
+		cgroup_tree = conf->cgroup_meta.dir;
 		monitor_cgroup = must_concat(&len, conf->cgroup_meta.dir, "/",
 					     DEFAULT_MONITOR_CGROUP_PREFIX,
 					     handler->name,
 					     CGROUP_CREATE_RETRY, NULL);
-	else
+	} else if (ops->cgroup_pattern) {
+		__cgroup_tree = lxc_string_replace("%n", handler->name, ops->cgroup_pattern);
+		if (!__cgroup_tree)
+			return ret_set_errno(false, ENOMEM);
+
+		cgroup_tree = __cgroup_tree;
+		monitor_cgroup = must_concat(&len, cgroup_tree, "/",
+					     DEFAULT_MONITOR_CGROUP,
+					     CGROUP_CREATE_RETRY, NULL);
+	} else {
+		cgroup_tree = NULL;
 		monitor_cgroup = must_concat(&len, DEFAULT_MONITOR_CGROUP_PREFIX,
 					     handler->name,
 					     CGROUP_CREATE_RETRY, NULL);
+	}
 	if (!monitor_cgroup)
 		return ret_set_errno(false, ENOMEM);
 
-	suffix = monitor_cgroup + len - CGROUP_CREATE_RETRY_LEN;
-	*suffix = '\0';
+	if (!conf->cgroup_meta.monitor_dir) {
+		suffix = monitor_cgroup + len - CGROUP_CREATE_RETRY_LEN;
+		*suffix = '\0';
+	}
 	do {
-		if (idx)
+		if (idx && suffix)
 			sprintf(suffix, "-%d", idx);
 
 		for (i = 0; ops->hierarchies[i]; i++) {
-			if (create_cgroup_tree(ops->hierarchies[i], cgroup_tree, monitor_cgroup, false))
+			if (cgroup_tree_create(ops, handler->conf,
+				               ops->hierarchies[i], cgroup_tree,
+				               monitor_cgroup, false, NULL))
 				continue;
 
-			ERROR("Failed to create cgroup \"%s\"", ops->hierarchies[i]->monitor_full_path ?: "(null)");
+			DEBUG("Failed to create cgroup \"%s\"", ops->hierarchies[i]->monitor_full_path ?: "(null)");
 			for (int j = 0; j < i; j++)
-				cgroup_remove_leaf(ops->hierarchies[j], false);
+				cgroup_tree_leaf_remove(ops->hierarchies[j], false);
 
 			idx++;
 			break;
 		}
-	} while (ops->hierarchies[i] && idx > 0 && idx < 1000);
+	} while (ops->hierarchies[i] && idx > 0 && idx < 1000 && suffix);
 
-	if (idx == 1000)
-		return ret_set_errno(false, ERANGE);
+	if (idx == 1000 || (!suffix && idx != 0))
+		return log_error_errno(false, ERANGE, "Failed to create monitor cgroup");
 
 	ops->monitor_cgroup = move_ptr(monitor_cgroup);
 	return log_info(true, "The monitor process uses \"%s\" as cgroup", ops->monitor_cgroup);
@@ -1308,15 +1370,16 @@ __cgfsng_ops static inline bool cgfsng_monitor_create(struct cgroup_ops *ops,
  * Try to create the same cgroup in all hierarchies. Start with cgroup_pattern;
  * next cgroup_pattern-1, -2, ..., -999.
  */
-__cgfsng_ops static inline bool cgfsng_payload_create(struct cgroup_ops *ops,
-						      struct lxc_handler *handler)
+__cgfsng_ops static bool cgfsng_payload_create(struct cgroup_ops *ops, struct lxc_handler *handler)
 {
-	__do_free char *container_cgroup = NULL;
+	__do_free char *container_cgroup = NULL,
+		       *__cgroup_tree = NULL,
+		       *limiting_cgroup = NULL;
 	const char *cgroup_tree;
 	int idx = 0;
 	int i;
 	size_t len;
-	char *suffix;
+	char *suffix = NULL;
 	struct lxc_conf *conf;
 
 	if (!ops)
@@ -1332,41 +1395,75 @@ __cgfsng_ops static inline bool cgfsng_payload_create(struct cgroup_ops *ops,
 		return ret_set_errno(false, EINVAL);
 
 	conf = handler->conf;
-	cgroup_tree = conf->cgroup_meta.dir;
 
-	if (cgroup_tree)
+	if (!check_cgroup_dir_config(conf))
+		return false;
+
+	if (conf->cgroup_meta.container_dir) {
+		cgroup_tree = NULL;
+
+		limiting_cgroup = strdup(conf->cgroup_meta.container_dir);
+		if (!limiting_cgroup)
+			return ret_set_errno(false, ENOMEM);
+
+		if (conf->cgroup_meta.namespace_dir) {
+			container_cgroup = must_make_path(limiting_cgroup,
+							  conf->cgroup_meta.namespace_dir,
+							  NULL);
+		} else {
+			/* explicit paths but without isolation */
+			container_cgroup = move_ptr(limiting_cgroup);
+		}
+	} else if (conf->cgroup_meta.dir) {
+		cgroup_tree = conf->cgroup_meta.dir;
 		container_cgroup = must_concat(&len, cgroup_tree, "/",
 					     DEFAULT_PAYLOAD_CGROUP_PREFIX,
 					     handler->name,
 					     CGROUP_CREATE_RETRY, NULL);
-	else
+	} else if (ops->cgroup_pattern) {
+		__cgroup_tree = lxc_string_replace("%n", handler->name, ops->cgroup_pattern);
+		if (!__cgroup_tree)
+			return ret_set_errno(false, ENOMEM);
+
+		cgroup_tree = __cgroup_tree;
+		container_cgroup = must_concat(&len, cgroup_tree, "/",
+					       DEFAULT_PAYLOAD_CGROUP,
+					       CGROUP_CREATE_RETRY, NULL);
+	} else {
+		cgroup_tree = NULL;
 		container_cgroup = must_concat(&len, DEFAULT_PAYLOAD_CGROUP_PREFIX,
 					     handler->name,
 					     CGROUP_CREATE_RETRY, NULL);
+	}
 	if (!container_cgroup)
 		return ret_set_errno(false, ENOMEM);
 
-	suffix = container_cgroup + len - CGROUP_CREATE_RETRY_LEN;
-	*suffix = '\0';
+	if (!conf->cgroup_meta.container_dir) {
+		suffix = container_cgroup + len - CGROUP_CREATE_RETRY_LEN;
+		*suffix = '\0';
+	}
 	do {
-		if (idx)
+		if (idx && suffix)
 			sprintf(suffix, "-%d", idx);
 
 		for (i = 0; ops->hierarchies[i]; i++) {
-			if (create_cgroup_tree(ops->hierarchies[i], cgroup_tree, container_cgroup, true))
+			if (cgroup_tree_create(ops, handler->conf,
+					       ops->hierarchies[i], cgroup_tree,
+					       container_cgroup, true,
+					       limiting_cgroup))
 				continue;
 
-			ERROR("Failed to create cgroup \"%s\"", ops->hierarchies[i]->container_full_path ?: "(null)");
+			DEBUG("Failed to create cgroup \"%s\"", ops->hierarchies[i]->container_full_path ?: "(null)");
 			for (int j = 0; j < i; j++)
-				cgroup_remove_leaf(ops->hierarchies[j], true);
+				cgroup_tree_leaf_remove(ops->hierarchies[j], true);
 
 			idx++;
 			break;
 		}
-	} while (ops->hierarchies[i] && idx > 0 && idx < 1000);
+	} while (ops->hierarchies[i] && idx > 0 && idx < 1000 && suffix);
 
-	if (idx == 1000)
-		return ret_set_errno(false, ERANGE);
+	if (idx == 1000 || (!suffix && idx != 0))
+		return log_error_errno(false, ERANGE, "Failed to create container cgroup");
 
 	ops->container_cgroup = move_ptr(container_cgroup);
 	INFO("The container process uses \"%s\" as cgroup", ops->container_cgroup);
@@ -1376,7 +1473,7 @@ __cgfsng_ops static inline bool cgfsng_payload_create(struct cgroup_ops *ops,
 __cgfsng_ops static bool cgfsng_monitor_enter(struct cgroup_ops *ops,
 					      struct lxc_handler *handler)
 {
-	int monitor_len, transient_len;
+	int monitor_len, transient_len = 0;
 	char monitor[INTTYPE_TO_STRLEN(pid_t)],
 	    transient[INTTYPE_TO_STRLEN(pid_t)];
 
@@ -1404,7 +1501,7 @@ __cgfsng_ops static bool cgfsng_monitor_enter(struct cgroup_ops *ops,
 		if (ret)
 			return log_error_errno(false, errno, "Failed to enter cgroup \"%s\"", h->monitor_full_path);
 
-                if (handler->transient_pid < 0)
+		if (handler->transient_pid <= 0)
 			return true;
 
 		ret = lxc_writeat(h->cgfd_mon, "cgroup.procs", transient, transient_len);
@@ -1448,6 +1545,9 @@ __cgfsng_ops static bool cgfsng_payload_enter(struct cgroup_ops *ops,
 	for (int i = 0; ops->hierarchies[i]; i++) {
 		struct hierarchy *h = ops->hierarchies[i];
 		int ret;
+
+		if (is_unified_hierarchy(h) && handler->clone_flags & CLONE_INTO_CGROUP)
+			continue;
 
 		ret = lxc_writeat(h->cgfd_con, "cgroup.procs", pidstr, len);
 		if (ret != 0)
@@ -1498,14 +1598,12 @@ static int chown_cgroup_wrapper(void *data)
 
 	ret = setresgid(nsgid, nsgid, nsgid);
 	if (ret < 0)
-		return log_error_errno(-1, errno,
-				       "Failed to setresgid(%d, %d, %d)",
+		return log_error_errno(-1, errno, "Failed to setresgid(%d, %d, %d)",
 				       (int)nsgid, (int)nsgid, (int)nsgid);
 
 	ret = setresuid(nsuid, nsuid, nsuid);
 	if (ret < 0)
-		return log_error_errno(-1, errno,
-				       "Failed to setresuid(%d, %d, %d)",
+		return log_error_errno(-1, errno, "Failed to setresuid(%d, %d, %d)",
 				       (int)nsuid, (int)nsuid, (int)nsuid);
 
 	destuid = get_ns_uid(arg->origuid);
@@ -1571,7 +1669,7 @@ __cgfsng_ops static bool cgfsng_chown(struct cgroup_ops *ops,
 	return true;
 }
 
-__cgfsng_ops void cgfsng_payload_finalize(struct cgroup_ops *ops)
+__cgfsng_ops static void cgfsng_payload_finalize(struct cgroup_ops *ops)
 {
 	if (!ops)
 		return;
@@ -1593,12 +1691,9 @@ __cgfsng_ops void cgfsng_payload_finalize(struct cgroup_ops *ops)
 }
 
 /* cgroup-full:* is done, no need to create subdirs */
-static bool cg_mount_needs_subdirs(int type)
+static inline bool cg_mount_needs_subdirs(int type)
 {
-	if (type >= LXC_AUTO_CGROUP_FULL_RO)
-		return false;
-
-	return true;
+	return !(type >= LXC_AUTO_CGROUP_FULL_RO);
 }
 
 /* After $rootfs/sys/fs/container/controller/the/cg/path has been created,
@@ -1615,11 +1710,9 @@ static int cg_legacy_mount_controllers(int type, struct hierarchy *h,
 
 	if (type == LXC_AUTO_CGROUP_RO || type == LXC_AUTO_CGROUP_MIXED) {
 		ret = mount(controllerpath, controllerpath, "cgroup", MS_BIND, NULL);
-		if (ret < 0) {
-			SYSERROR("Failed to bind mount \"%s\" onto \"%s\"",
-				 controllerpath, controllerpath);
-			return -1;
-		}
+		if (ret < 0)
+			return log_error_errno(-1, errno, "Failed to bind mount \"%s\" onto \"%s\"",
+					       controllerpath, controllerpath);
 
 		remount_flags = add_required_remount_flags(controllerpath,
 							   controllerpath,
@@ -1627,10 +1720,8 @@ static int cg_legacy_mount_controllers(int type, struct hierarchy *h,
 		ret = mount(controllerpath, controllerpath, "cgroup",
 			    remount_flags | MS_REMOUNT | MS_BIND | MS_RDONLY,
 			    NULL);
-		if (ret < 0) {
-			SYSERROR("Failed to remount \"%s\" ro", controllerpath);
-			return -1;
-		}
+		if (ret < 0)
+			return log_error_errno(-1, errno, "Failed to remount \"%s\" ro", controllerpath);
 
 		INFO("Remounted %s read-only", controllerpath);
 	}
@@ -1641,20 +1732,17 @@ static int cg_legacy_mount_controllers(int type, struct hierarchy *h,
 		flags |= MS_RDONLY;
 
 	ret = mount(sourcepath, cgpath, "cgroup", flags, NULL);
-	if (ret < 0) {
-		SYSERROR("Failed to mount \"%s\" onto \"%s\"", h->controllers[0], cgpath);
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to mount \"%s\" onto \"%s\"",
+				       h->controllers[0], cgpath);
 	INFO("Mounted \"%s\" onto \"%s\"", h->controllers[0], cgpath);
 
 	if (flags & MS_RDONLY) {
 		remount_flags = add_required_remount_flags(sourcepath, cgpath,
 							   flags | MS_REMOUNT);
 		ret = mount(sourcepath, cgpath, "cgroup", remount_flags, NULL);
-		if (ret < 0) {
-			SYSERROR("Failed to remount \"%s\" ro", cgpath);
-			return -1;
-		}
+		if (ret < 0)
+			return log_error_errno(-1, errno, "Failed to remount \"%s\" ro", cgpath);
 		INFO("Remounted %s read-only", cgpath);
 	}
 
@@ -1692,10 +1780,9 @@ static int __cg_mount_direct(int type, struct hierarchy *h,
 	}
 
 	ret = mount("cgroup", controllerpath, fstype, flags, controllers);
-	if (ret < 0) {
-		SYSERROR("Failed to mount \"%s\" with cgroup filesystem type %s", controllerpath, fstype);
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(-1, errno, "Failed to mount \"%s\" with cgroup filesystem type %s",
+				       controllerpath, fstype);
 
 	DEBUG("Mounted \"%s\" with cgroup filesystem type %s", controllerpath, fstype);
 	return 0;
@@ -1721,8 +1808,8 @@ __cgfsng_ops static bool cgfsng_mount(struct cgroup_ops *ops,
 				      const char *root, int type)
 {
 	__do_free char *cgroup_root = NULL;
+	bool has_cgns = false, wants_force_mount = false;
 	int ret;
-	bool has_cgns = false, retval = false, wants_force_mount = false;
 
 	if (!ops)
 		return ret_set_errno(false, ENOENT);
@@ -1741,11 +1828,24 @@ __cgfsng_ops static bool cgfsng_mount(struct cgroup_ops *ops,
 		wants_force_mount = true;
 	}
 
-	if (!wants_force_mount){
+	if (!wants_force_mount) {
 		if (!lxc_list_empty(&handler->conf->keepcaps))
 			wants_force_mount = !in_caplist(CAP_SYS_ADMIN, &handler->conf->keepcaps);
 		else
 			wants_force_mount = in_caplist(CAP_SYS_ADMIN, &handler->conf->caps);
+
+		/*
+		 * Most recent distro versions currently have init system that
+		 * do support cgroup2 but do not mount it by default unless
+		 * explicitly told so even if the host is cgroup2 only. That
+		 * means they often will fail to boot. Fix this by pre-mounting
+		 * cgroup2 by default. We will likely need to be doing this a
+		 * few years until all distros have switched over to cgroup2 at
+		 * which point we can safely assume that their init systems
+		 * will mount it themselves.
+		 */
+		if (pure_unified_layout(ops))
+			wants_force_mount = true;
 	}
 
 	has_cgns = cgns_supported();
@@ -1760,23 +1860,31 @@ __cgfsng_ops static bool cgfsng_mount(struct cgroup_ops *ops,
 	cgroup_root = must_make_path(root, DEFAULT_CGROUP_MOUNTPOINT, NULL);
 	if (ops->cgroup_layout == CGROUP_LAYOUT_UNIFIED) {
 		if (has_cgns && wants_force_mount) {
-			/* If cgroup namespaces are supported but the container
+			/*
+			 * If cgroup namespaces are supported but the container
 			 * will not have CAP_SYS_ADMIN after it has started we
 			 * need to mount the cgroups manually.
 			 */
-			return cg_mount_in_cgroup_namespace(type, ops->unified,
-							    cgroup_root) == 0;
+			return cg_mount_in_cgroup_namespace(type, ops->unified, cgroup_root) == 0;
 		}
 
 		return cg_mount_cgroup_full(type, ops->unified, cgroup_root) == 0;
 	}
 
 	/* mount tmpfs */
-	ret = safe_mount(NULL, cgroup_root, "tmpfs",
-			 MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RELATIME,
-			 "size=10240k,mode=755", root);
+	ret = safe_mount_beneath(root, NULL, DEFAULT_CGROUP_MOUNTPOINT, "tmpfs",
+				 MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RELATIME,
+				 "size=10240k,mode=755");
+	if (ret < 0) {
+		if (errno != ENOSYS)
+			return false;
+
+		ret = safe_mount(NULL, cgroup_root, "tmpfs",
+				 MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RELATIME,
+				 "size=10240k,mode=755", root);
+	}
 	if (ret < 0)
-		goto on_error;
+		return false;
 
 	for (int i = 0; ops->hierarchies[i]; i++) {
 		__do_free char *controllerpath = NULL, *path2 = NULL;
@@ -1793,9 +1901,7 @@ __cgfsng_ops static bool cgfsng_mount(struct cgroup_ops *ops,
 
 		ret = mkdir(controllerpath, 0755);
 		if (ret < 0)
-			log_error_errno(goto on_error, errno,
-					"Error creating cgroup path: %s",
-					controllerpath);
+			return log_error_errno(false, errno, "Error creating cgroup path: %s", controllerpath);
 
 		if (has_cgns && wants_force_mount) {
 			/* If cgroup namespaces are supported but the container
@@ -1804,14 +1910,14 @@ __cgfsng_ops static bool cgfsng_mount(struct cgroup_ops *ops,
 			 */
 			ret = cg_mount_in_cgroup_namespace(type, h, controllerpath);
 			if (ret < 0)
-				goto on_error;
+				return false;
 
 			continue;
 		}
 
 		ret = cg_mount_cgroup_full(type, h, controllerpath);
 		if (ret < 0)
-			goto on_error;
+			return false;
 
 		if (!cg_mount_needs_subdirs(type))
 			continue;
@@ -1820,68 +1926,15 @@ __cgfsng_ops static bool cgfsng_mount(struct cgroup_ops *ops,
 				       ops->container_cgroup, NULL);
 		ret = mkdir_p(path2, 0755);
 		if (ret < 0)
-			goto on_error;
+			return false;
 
 		ret = cg_legacy_mount_controllers(type, h, controllerpath,
 						  path2, ops->container_cgroup);
 		if (ret < 0)
-			goto on_error;
-	}
-	retval = true;
-
-on_error:
-	return retval;
-}
-
-static int recursive_count_nrtasks(char *dirname)
-{
-	__do_free char *path = NULL;
-	__do_closedir DIR *dir = NULL;
-	struct dirent *direntp;
-	int count = 0, ret;
-
-	dir = opendir(dirname);
-	if (!dir)
-		return 0;
-
-	while ((direntp = readdir(dir))) {
-		struct stat mystat;
-
-		if (!strcmp(direntp->d_name, ".") ||
-		    !strcmp(direntp->d_name, ".."))
-			continue;
-
-		path = must_make_path(dirname, direntp->d_name, NULL);
-
-		if (lstat(path, &mystat))
-			continue;
-
-		if (!S_ISDIR(mystat.st_mode))
-			continue;
-
-		count += recursive_count_nrtasks(path);
+			return false;
 	}
 
-	path = must_make_path(dirname, "cgroup.procs", NULL);
-	ret = lxc_count_file_lines(path);
-	if (ret != -1)
-		count += ret;
-
-	return count;
-}
-
-__cgfsng_ops static int cgfsng_nrtasks(struct cgroup_ops *ops)
-{
-	__do_free char *path = NULL;
-
-	if (!ops)
-		return ret_set_errno(-1, ENOENT);
-
-	if (!ops->container_cgroup || !ops->hierarchies)
-		return ret_set_errno(-1, EINVAL);
-
-	path = must_make_path(ops->hierarchies[0]->container_full_path, NULL);
-	return recursive_count_nrtasks(path);
+	return true;
 }
 
 /* Only root needs to escape to the cgroup of its init. */
@@ -1910,9 +1963,7 @@ __cgfsng_ops static bool cgfsng_escape(const struct cgroup_ops *ops,
 				   "cgroup.procs", NULL);
 		ret = lxc_write_to_file(fullpath, "0", 2, false, 0666);
 		if (ret != 0)
-			return log_error_errno(false,
-					       errno, "Failed to escape to cgroup \"%s\"",
-					       fullpath);
+			return log_error_errno(false, errno, "Failed to escape to cgroup \"%s\"", fullpath);
 	}
 
 	return true;
@@ -1943,7 +1994,7 @@ __cgfsng_ops static bool cgfsng_get_hierarchies(struct cgroup_ops *ops, int n,
 		return ret_set_errno(false, ENOENT);
 
 	if (!ops->hierarchies)
-		return false;
+		return ret_set_errno(false, ENOENT);
 
 	/* sanity check n */
 	for (i = 0; i < n; i++)
@@ -1970,7 +2021,7 @@ static bool cg_legacy_freeze(struct cgroup_ops *ops)
 static int freezer_cgroup_events_cb(int fd, uint32_t events, void *cbdata,
 				    struct lxc_epoll_descr *descr)
 {
-	__do_close_prot_errno int duped_fd = -EBADF;
+	__do_close int duped_fd = -EBADF;
 	__do_free char *line = NULL;
 	__do_fclose FILE *f = NULL;
 	int state = PTR_TO_INT(cbdata);
@@ -2001,10 +2052,14 @@ static int freezer_cgroup_events_cb(int fd, uint32_t events, void *cbdata,
 	return LXC_MAINLOOP_CONTINUE;
 }
 
-static int cg_unified_freeze(struct cgroup_ops *ops, int timeout)
+static int cg_unified_freeze_do(struct cgroup_ops *ops, int timeout,
+				const char *state_string,
+				int state_num,
+				const char *epoll_error,
+				const char *wait_error)
 {
-	__do_close_prot_errno int fd = -EBADF;
-	__do_lxc_mainloop_close struct lxc_epoll_descr *descr_ptr = NULL;
+	__do_close int fd = -EBADF;
+	call_cleaner(lxc_mainloop_close) struct lxc_epoll_descr *descr_ptr = NULL;
 	int ret;
 	struct lxc_epoll_descr descr;
 	struct hierarchy *h;
@@ -2026,24 +2081,31 @@ static int cg_unified_freeze(struct cgroup_ops *ops, int timeout)
 
 		ret = lxc_mainloop_open(&descr);
 		if (ret)
-			return log_error_errno(-1, errno, "Failed to create epoll instance to wait for container freeze");
+			return log_error_errno(-1, errno, "%s", epoll_error);
 
 		/* automatically cleaned up now */
 		descr_ptr = &descr;
 
-		ret = lxc_mainloop_add_handler(&descr, fd, freezer_cgroup_events_cb, INT_TO_PTR((int){1}));
+		ret = lxc_mainloop_add_handler_events(&descr, fd, EPOLLPRI, freezer_cgroup_events_cb, INT_TO_PTR(state_num));
 		if (ret < 0)
 			return log_error_errno(-1, errno, "Failed to add cgroup.events fd handler to mainloop");
 	}
 
-	ret = lxc_write_openat(h->container_full_path, "cgroup.freeze", "1", 1);
+	ret = lxc_write_openat(h->container_full_path, "cgroup.freeze", state_string, 1);
 	if (ret < 0)
 		return log_error_errno(-1, errno, "Failed to open cgroup.freeze file");
 
 	if (timeout != 0 && lxc_mainloop(&descr, timeout))
-		return log_error_errno(-1, errno, "Failed to wait for container to be frozen");
+		return log_error_errno(-1, errno, "%s", wait_error);
 
 	return 0;
+}
+
+static int cg_unified_freeze(struct cgroup_ops *ops, int timeout)
+{
+	return cg_unified_freeze_do(ops, timeout, "1", 1,
+		"Failed to create epoll instance to wait for container freeze",
+		"Failed to wait for container to be frozen");
 }
 
 __cgfsng_ops static int cgfsng_freeze(struct cgroup_ops *ops, int timeout)
@@ -2071,47 +2133,9 @@ static int cg_legacy_unfreeze(struct cgroup_ops *ops)
 
 static int cg_unified_unfreeze(struct cgroup_ops *ops, int timeout)
 {
-	__do_close_prot_errno int fd = -EBADF;
-	__do_lxc_mainloop_close struct lxc_epoll_descr *descr_ptr = NULL;
-	int ret;
-	struct lxc_epoll_descr descr;
-	struct hierarchy *h;
-
-	h = ops->unified;
-	if (!h)
-		return ret_set_errno(-1, ENOENT);
-
-	if (!h->container_full_path)
-		return ret_set_errno(-1, EEXIST);
-
-	if (timeout != 0) {
-		__do_free char *events_file = NULL;
-
-		events_file = must_make_path(h->container_full_path, "cgroup.events", NULL);
-		fd = open(events_file, O_RDONLY | O_CLOEXEC);
-		if (fd < 0)
-			return log_error_errno(-1, errno, "Failed to open cgroup.events file");
-
-		ret = lxc_mainloop_open(&descr);
-		if (ret)
-			return log_error_errno(-1, errno, "Failed to create epoll instance to wait for container unfreeze");
-
-		/* automatically cleaned up now */
-		descr_ptr = &descr;
-
-		ret = lxc_mainloop_add_handler(&descr, fd, freezer_cgroup_events_cb, INT_TO_PTR((int){0}));
-		if (ret < 0)
-			return log_error_errno(-1, errno, "Failed to add cgroup.events fd handler to mainloop");
-	}
-
-	ret = lxc_write_openat(h->container_full_path, "cgroup.freeze", "0", 1);
-	if (ret < 0)
-		return log_error_errno(-1, errno, "Failed to open cgroup.freeze file");
-
-	if (timeout != 0 && lxc_mainloop(&descr, timeout))
-		return log_error_errno(-1, errno, "Failed to wait for container to be unfrozen");
-
-	return 0;
+	return cg_unified_freeze_do(ops, timeout, "0", 0,
+		"Failed to create epoll instance to wait for container unfreeze",
+		"Failed to wait for container to be unfrozen");
 }
 
 __cgfsng_ops static int cgfsng_unfreeze(struct cgroup_ops *ops, int timeout)
@@ -2125,20 +2149,36 @@ __cgfsng_ops static int cgfsng_unfreeze(struct cgroup_ops *ops, int timeout)
 	return cg_unified_unfreeze(ops, timeout);
 }
 
-__cgfsng_ops static const char *cgfsng_get_cgroup(struct cgroup_ops *ops,
-						  const char *controller)
+static const char *cgfsng_get_cgroup_do(struct cgroup_ops *ops,
+					const char *controller, bool limiting)
 {
 	struct hierarchy *h;
 
 	h = get_hierarchy(ops, controller);
 	if (!h)
-		return log_warn_errno(NULL,
-				      ENOENT, "Failed to find hierarchy for controller \"%s\"",
+		return log_warn_errno(NULL, ENOENT, "Failed to find hierarchy for controller \"%s\"",
 				      controller ? controller : "(null)");
+
+	if (limiting)
+		return h->container_limit_path
+			   ? h->container_limit_path + strlen(h->mountpoint)
+			   : NULL;
 
 	return h->container_full_path
 		   ? h->container_full_path + strlen(h->mountpoint)
 		   : NULL;
+}
+
+__cgfsng_ops static const char *cgfsng_get_cgroup(struct cgroup_ops *ops,
+						  const char *controller)
+{
+    return cgfsng_get_cgroup_do(ops, controller, false);
+}
+
+__cgfsng_ops static const char *cgfsng_get_limiting_cgroup(struct cgroup_ops *ops,
+							   const char *controller)
+{
+    return cgfsng_get_cgroup_do(ops, controller, true);
 }
 
 /* Given a cgroup path returned from lxc_cmd_get_cgroup_path, build a full path,
@@ -2151,21 +2191,20 @@ static inline char *build_full_cgpath_from_monitorpath(struct hierarchy *h,
 	return must_make_path(h->mountpoint, inpath, filename, NULL);
 }
 
-static int cgroup_attach_leaf(int unified_fd, int64_t pid)
+static int cgroup_attach_leaf(const struct lxc_conf *conf, int unified_fd, pid_t pid)
 {
 	int idx = 1;
 	int ret;
 	char pidstr[INTTYPE_TO_STRLEN(int64_t) + 1];
-	char attach_cgroup[STRLITERALLEN("lxc-1000/cgroup.procs") + 1];
 	size_t pidstr_len;
 
 	/* Create leaf cgroup. */
-	ret = mkdirat(unified_fd, "lxc", 0755);
+	ret = mkdirat(unified_fd, ".lxc", 0755);
 	if (ret < 0 && errno != EEXIST)
-		return log_error_errno(-1, errno, "Failed to create leaf cgroup \"lxc\"");
+		return log_error_errno(-1, errno, "Failed to create leaf cgroup \".lxc\"");
 
-	pidstr_len = sprintf(pidstr, INT64_FMT, pid);
-	ret = lxc_writeat(unified_fd, "lxc/cgroup.procs", pidstr, pidstr_len);
+	pidstr_len = sprintf(pidstr, INT64_FMT, (int64_t)pid);
+	ret = lxc_writeat(unified_fd, ".lxc/cgroup.procs", pidstr, pidstr_len);
 	if (ret < 0)
 		ret = lxc_writeat(unified_fd, "cgroup.procs", pidstr, pidstr_len);
 	if (ret == 0)
@@ -2176,21 +2215,31 @@ static int cgroup_attach_leaf(int unified_fd, int64_t pid)
 		return log_error_errno(-1, errno, "Failed to attach to unified cgroup");
 
 	do {
+		bool rm = false;
+		char attach_cgroup[STRLITERALLEN(".lxc-1000/cgroup.procs") + 1];
 		char *slash;
 
-		sprintf(attach_cgroup, "lxc-%d/cgroup.procs", idx);
+		ret = snprintf(attach_cgroup, sizeof(attach_cgroup), ".lxc-%d/cgroup.procs", idx);
+		if (ret < 0 || (size_t)ret >= sizeof(attach_cgroup))
+			return ret_errno(EIO);
+
 		slash = &attach_cgroup[ret] - STRLITERALLEN("/cgroup.procs");
 		*slash = '\0';
 
 		ret = mkdirat(unified_fd, attach_cgroup, 0755);
 		if (ret < 0 && errno != EEXIST)
 			return log_error_errno(-1, errno, "Failed to create cgroup %s", attach_cgroup);
+		if (ret == 0)
+			rm = true;
 
 		*slash = '/';
 
 		ret = lxc_writeat(unified_fd, attach_cgroup, pidstr, pidstr_len);
 		if (ret == 0)
 			return 0;
+
+		if (rm && unlinkat(unified_fd, attach_cgroup, AT_REMOVEDIR))
+			SYSERROR("Failed to remove cgroup \"%d(%s)\"", unified_fd, attach_cgroup);
 
 		/* this is a non-leaf node */
 		if (errno != EBUSY)
@@ -2202,15 +2251,132 @@ static int cgroup_attach_leaf(int unified_fd, int64_t pid)
 	return log_error_errno(-1, errno, "Failed to attach to unified cgroup");
 }
 
-int cgroup_attach(const char *name, const char *lxcpath, int64_t pid)
+static int cgroup_attach_create_leaf(const struct lxc_conf *conf,
+				     int unified_fd, int *sk_fd)
 {
-	__do_close_prot_errno int unified_fd = -EBADF;
+	__do_close int sk = *sk_fd, target_fd0 = -EBADF, target_fd1 = -EBADF;
+	int target_fds[2];
+	ssize_t ret;
+
+	/* Create leaf cgroup. */
+	ret = mkdirat(unified_fd, ".lxc", 0755);
+	if (ret < 0 && errno != EEXIST)
+		return log_error_errno(-1, errno, "Failed to create leaf cgroup \".lxc\"");
+
+	target_fd0 = openat(unified_fd, ".lxc/cgroup.procs", O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (target_fd0 < 0)
+		return log_error_errno(-errno, errno, "Failed to open \".lxc/cgroup.procs\"");
+	target_fds[0] = target_fd0;
+
+	target_fd1 = openat(unified_fd, "cgroup.procs", O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (target_fd1 < 0)
+		return log_error_errno(-errno, errno, "Failed to open \".lxc/cgroup.procs\"");
+	target_fds[1] = target_fd1;
+
+	ret = lxc_abstract_unix_send_fds(sk, target_fds, 2, NULL, 0);
+	if (ret <= 0)
+		return log_error_errno(-errno, errno, "Failed to send \".lxc/cgroup.procs\" fds %d and %d",
+				       target_fd0, target_fd1);
+
+	return log_debug(0, "Sent target cgroup fds %d and %d", target_fd0, target_fd1);
+}
+
+static int cgroup_attach_move_into_leaf(const struct lxc_conf *conf,
+					int *sk_fd, pid_t pid)
+{
+	__do_close int sk = *sk_fd, target_fd0 = -EBADF, target_fd1 = -EBADF;
+	int target_fds[2];
+	char pidstr[INTTYPE_TO_STRLEN(int64_t) + 1];
+	size_t pidstr_len;
+	ssize_t ret;
+
+	ret = lxc_abstract_unix_recv_fds(sk, target_fds, 2, NULL, 0);
+	if (ret <= 0)
+		return log_error_errno(-1, errno, "Failed to receive target cgroup fd");
+	target_fd0 = target_fds[0];
+	target_fd1 = target_fds[1];
+
+	pidstr_len = sprintf(pidstr, INT64_FMT, (int64_t)pid);
+
+	ret = lxc_write_nointr(target_fd0, pidstr, pidstr_len);
+	if (ret > 0 && ret == pidstr_len)
+		return log_debug(0, "Moved process into target cgroup via fd %d", target_fd0);
+
+	ret = lxc_write_nointr(target_fd1, pidstr, pidstr_len);
+	if (ret > 0 && ret == pidstr_len)
+		return log_debug(0, "Moved process into target cgroup via fd %d", target_fd1);
+
+	return log_debug_errno(-1, errno, "Failed to move process into target cgroup via fd %d and %d",
+			       target_fd0, target_fd1);
+}
+
+struct userns_exec_unified_attach_data {
+	const struct lxc_conf *conf;
+	int unified_fd;
+	int sk_pair[2];
+	pid_t pid;
+};
+
+static int cgroup_unified_attach_child_wrapper(void *data)
+{
+	struct userns_exec_unified_attach_data *args = data;
+
+	if (!args->conf || args->unified_fd < 0 || args->pid <= 0 ||
+	    args->sk_pair[0] < 0 || args->sk_pair[1] < 0)
+		return ret_errno(EINVAL);
+
+	close_prot_errno_disarm(args->sk_pair[0]);
+	return cgroup_attach_create_leaf(args->conf, args->unified_fd,
+					 &args->sk_pair[1]);
+}
+
+static int cgroup_unified_attach_parent_wrapper(void *data)
+{
+	struct userns_exec_unified_attach_data *args = data;
+
+	if (!args->conf || args->unified_fd < 0 || args->pid <= 0 ||
+	    args->sk_pair[0] < 0 || args->sk_pair[1] < 0)
+		return ret_errno(EINVAL);
+
+	close_prot_errno_disarm(args->sk_pair[1]);
+	return cgroup_attach_move_into_leaf(args->conf, &args->sk_pair[0],
+					    args->pid);
+}
+
+int cgroup_attach(const struct lxc_conf *conf, const char *name,
+		  const char *lxcpath, pid_t pid)
+{
+	__do_close int unified_fd = -EBADF;
+	int ret;
+
+	if (!conf || !name || !lxcpath || pid <= 0)
+		return ret_errno(EINVAL);
 
 	unified_fd = lxc_cmd_get_cgroup2_fd(name, lxcpath);
 	if (unified_fd < 0)
-		return -1;
+		return ret_errno(EBADF);
 
-	return cgroup_attach_leaf(unified_fd, pid);
+	if (!lxc_list_empty(&conf->id_map)) {
+		struct userns_exec_unified_attach_data args = {
+			.conf		= conf,
+			.unified_fd	= unified_fd,
+			.pid		= pid,
+		};
+
+		ret = socketpair(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0, args.sk_pair);
+		if (ret < 0)
+			return -errno;
+
+		ret = userns_exec_minimal(conf,
+					  cgroup_unified_attach_parent_wrapper,
+					  &args,
+					  cgroup_unified_attach_child_wrapper,
+					  &args);
+	} else {
+		ret = cgroup_attach_leaf(conf, unified_fd, pid);
+	}
+
+	return ret;
 }
 
 /* Technically, we're always at a delegation boundary here (This is especially
@@ -2222,33 +2388,63 @@ int cgroup_attach(const char *name, const char *lxcpath, int64_t pid)
  * created when we started the container in the latter case we create our own
  * cgroup for the attaching process.
  */
-static int __cg_unified_attach(const struct hierarchy *h, const char *name,
+static int __cg_unified_attach(const struct hierarchy *h,
+			       const struct lxc_conf *conf, const char *name,
 			       const char *lxcpath, pid_t pid,
 			       const char *controller)
 {
-	__do_close_prot_errno int unified_fd = -EBADF;
+	__do_close int unified_fd = -EBADF;
+	__do_free char *path = NULL, *cgroup = NULL;
 	int ret;
 
-	ret = cgroup_attach(name, lxcpath, pid);
-	if (ret < 0) {
-		__do_free char *path = NULL, *cgroup = NULL;
+	if (!conf || !name || !lxcpath || pid <= 0)
+		return ret_errno(EINVAL);
 
-		cgroup = lxc_cmd_get_cgroup_path(name, lxcpath, controller);
-		/* not running */
-		if (!cgroup)
-			return 0;
+	ret = cgroup_attach(conf, name, lxcpath, pid);
+	if (ret == 0)
+		return log_trace(0, "Attached to unified cgroup via command handler");
+	if (ret != -EBADF)
+		return log_error_errno(ret, errno, "Failed to attach to unified cgroup");
 
-		path = must_make_path(h->mountpoint, cgroup, NULL);
-		unified_fd = open(path, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
-	}
+	/* Fall back to retrieving the path for the unified cgroup. */
+	cgroup = lxc_cmd_get_cgroup_path(name, lxcpath, controller);
+	/* not running */
+	if (!cgroup)
+		return 0;
+
+	path = must_make_path(h->mountpoint, cgroup, NULL);
+
+	unified_fd = open(path, O_PATH | O_DIRECTORY | O_CLOEXEC);
 	if (unified_fd < 0)
-		return -1;
+		return ret_errno(EBADF);
 
-	return cgroup_attach_leaf(unified_fd, pid);
+	if (!lxc_list_empty(&conf->id_map)) {
+		struct userns_exec_unified_attach_data args = {
+			.conf		= conf,
+			.unified_fd	= unified_fd,
+			.pid		= pid,
+		};
+
+		ret = socketpair(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0, args.sk_pair);
+		if (ret < 0)
+			return -errno;
+
+		ret = userns_exec_minimal(conf,
+					  cgroup_unified_attach_parent_wrapper,
+					  &args,
+					  cgroup_unified_attach_child_wrapper,
+					  &args);
+	} else {
+		ret = cgroup_attach_leaf(conf, unified_fd, pid);
+	}
+
+	return ret;
 }
 
-__cgfsng_ops static bool cgfsng_attach(struct cgroup_ops *ops, const char *name,
-					 const char *lxcpath, pid_t pid)
+__cgfsng_ops static bool cgfsng_attach(struct cgroup_ops *ops,
+				       const struct lxc_conf *conf,
+				       const char *name, const char *lxcpath,
+				       pid_t pid)
 {
 	int len, ret;
 	char pidstr[INTTYPE_TO_STRLEN(pid_t)];
@@ -2268,7 +2464,7 @@ __cgfsng_ops static bool cgfsng_attach(struct cgroup_ops *ops, const char *name,
 		struct hierarchy *h = ops->hierarchies[i];
 
 		if (h->version == CGROUP2_SUPER_MAGIC) {
-			ret = __cg_unified_attach(h, name, lxcpath, pid,
+			ret = __cg_unified_attach(h, conf, name, lxcpath, pid,
 						  h->controllers[0]);
 			if (ret < 0)
 				return false;
@@ -2284,8 +2480,7 @@ __cgfsng_ops static bool cgfsng_attach(struct cgroup_ops *ops, const char *name,
 		fullpath = build_full_cgpath_from_monitorpath(h, path, "cgroup.procs");
 		ret = lxc_write_to_file(fullpath, pidstr, len, false, 0666);
 		if (ret < 0)
-			return log_error_errno(false, errno,
-					       "Failed to attach %d to %s",
+			return log_error_errno(false, errno, "Failed to attach %d to %s",
 					       (int)pid, fullpath);
 	}
 
@@ -2314,7 +2509,7 @@ __cgfsng_ops static int cgfsng_get(struct cgroup_ops *ops, const char *filename,
 	if (p)
 		*p = '\0';
 
-	path = lxc_cmd_get_cgroup_path(name, lxcpath, controller);
+	path = lxc_cmd_get_limiting_cgroup_path(name, lxcpath, controller);
 	/* not running */
 	if (!path)
 		return -1;
@@ -2372,13 +2567,14 @@ static int device_cgroup_rule_parse(struct device_item *device, const char *key,
 		device->major = -1;
 		device->minor = -1;
 		device->global_rule = device->allow
-					  ? LXC_BPF_DEVICE_CGROUP_BLACKLIST
-					  : LXC_BPF_DEVICE_CGROUP_WHITELIST;
+					  ? LXC_BPF_DEVICE_CGROUP_DENYLIST
+					  : LXC_BPF_DEVICE_CGROUP_ALLOWLIST;
 		device->allow = -1;
 		return 0;
-	} else {
-		device->global_rule = LXC_BPF_DEVICE_CGROUP_LOCAL_RULE;
 	}
+
+	/* local rule */
+	device->global_rule = LXC_BPF_DEVICE_CGROUP_LOCAL_RULE;
 
 	switch (*val) {
 	case 'a':
@@ -2464,7 +2660,7 @@ __cgfsng_ops static int cgfsng_set(struct cgroup_ops *ops,
 		*p = '\0';
 
 	if (pure_unified_layout(ops) && strcmp(controller, "devices") == 0) {
-		struct device_item device = {0};
+		struct device_item device = {};
 
 		ret = device_cgroup_rule_parse(&device, key, value);
 		if (ret < 0)
@@ -2478,7 +2674,7 @@ __cgfsng_ops static int cgfsng_set(struct cgroup_ops *ops,
 		return 0;
 	}
 
-	path = lxc_cmd_get_cgroup_path(name, lxcpath, controller);
+	path = lxc_cmd_get_limiting_cgroup_path(name, lxcpath, controller);
 	/* not running */
 	if (!path)
 		return -1;
@@ -2536,6 +2732,9 @@ static int device_cgroup_rule_parse_devpath(struct device_item *device,
 			return ret_set_errno(-1, EINVAL);
 	}
 
+	if (!mode)
+		return ret_errno(EINVAL);
+
 	if (device_cgroup_parse_access(device, mode) < 0)
 		return -1;
 
@@ -2555,9 +2754,7 @@ static int device_cgroup_rule_parse_devpath(struct device_item *device,
 		device->type = 'c';
 		break;
 	default:
-		return log_error_errno(-1, EINVAL,
-				       "Unsupported device type %i for \"%s\"",
-				       m, path);
+		return log_error_errno(-1, EINVAL, "Unsupported device type %i for \"%s\"", m, path);
 	}
 
 	device->major = MAJOR(sb.st_rdev);
@@ -2570,7 +2767,7 @@ static int device_cgroup_rule_parse_devpath(struct device_item *device,
 
 static int convert_devpath(const char *invalue, char *dest)
 {
-	struct device_item device = {0};
+	struct device_item device = {};
 	int ret;
 
 	ret = device_cgroup_rule_parse_devpath(&device, invalue);
@@ -2580,10 +2777,8 @@ static int convert_devpath(const char *invalue, char *dest)
 	ret = snprintf(dest, 50, "%c %d:%d %s", device.type, device.major,
 		       device.minor, device.access);
 	if (ret < 0 || ret >= 50)
-		return log_error_errno(-1,
-				       ENAMETOOLONG, "Error on configuration value \"%c %d:%d %s\" (max 50 chars)",
-				       device.type, device.major, device.minor,
-				       device.access);
+		return log_error_errno(-1, ENAMETOOLONG, "Error on configuration value \"%c %d:%d %s\" (max 50 chars)",
+				       device.type, device.major, device.minor, device.access);
 
 	return 0;
 }
@@ -2592,7 +2787,7 @@ static int convert_devpath(const char *invalue, char *dest)
  * we created the cgroups.
  */
 static int cg_legacy_set_data(struct cgroup_ops *ops, const char *filename,
-			      const char *value)
+			      const char *value, bool is_cpuset)
 {
 	__do_free char *controller = NULL;
 	char *p;
@@ -2615,16 +2810,15 @@ static int cg_legacy_set_data(struct cgroup_ops *ops, const char *filename,
 	}
 
 	h = get_hierarchy(ops, controller);
-	if (!h) {
-		ERROR("Failed to setup limits for the \"%s\" controller. "
-		      "The controller seems to be unused by \"cgfsng\" cgroup "
-		      "driver or not enabled on the cgroup hierarchy",
-		      controller);
-		errno = ENOENT;
-		return -ENOENT;
-	}
+	if (!h)
+		return log_error_errno(-ENOENT, ENOENT, "Failed to setup limits for the \"%s\" controller. The controller seems to be unused by \"cgfsng\" cgroup driver or not enabled on the cgroup hierarchy", controller);
 
-	return lxc_write_openat(h->container_full_path, filename, value, strlen(value));
+	if (is_cpuset) {
+		int ret = lxc_write_openat(h->container_full_path, filename, value, strlen(value));
+		if (ret)
+			return ret;
+	}
+	return lxc_write_openat(h->container_limit_path, filename, value, strlen(value));
 }
 
 __cgfsng_ops static bool cgfsng_setup_limits_legacy(struct cgroup_ops *ops,
@@ -2650,6 +2844,9 @@ __cgfsng_ops static bool cgfsng_setup_limits_legacy(struct cgroup_ops *ops,
 	if (!ops->hierarchies)
 		return ret_set_errno(false, EINVAL);
 
+	if (pure_unified_layout(ops))
+		return log_warn_errno(true, EINVAL, "Ignoring legacy cgroup limits on pure cgroup2 system");
+
 	sorted_cgroup_settings = sort_cgroup_settings(cgroup_settings);
 	if (!sorted_cgroup_settings)
 		return false;
@@ -2658,17 +2855,15 @@ __cgfsng_ops static bool cgfsng_setup_limits_legacy(struct cgroup_ops *ops,
 		cg = iterator->elem;
 
 		if (do_devices == !strncmp("devices", cg->subsystem, 7)) {
-			if (cg_legacy_set_data(ops, cg->subsystem, cg->value)) {
-				if (do_devices && (errno == EACCES || errno == EPERM))
-					log_warn_errno(continue,
-						       errno, "Failed to set \"%s\" to \"%s\"",
-						       cg->subsystem, cg->value);
-				log_warn_errno(goto out, errno,
-					       "Failed to set \"%s\" to \"%s\"",
-					       cg->subsystem, cg->value);
+			if (cg_legacy_set_data(ops, cg->subsystem, cg->value, strncmp("cpuset", cg->subsystem, 6) == 0)) {
+				if (do_devices && (errno == EACCES || errno == EPERM)) {
+					SYSWARN("Failed to set \"%s\" to \"%s\"", cg->subsystem, cg->value);
+					continue;
+				}
+				SYSERROR("Failed to set \"%s\" to \"%s\"", cg->subsystem, cg->value);
+				goto out;
 			}
-			DEBUG("Set controller \"%s\" set to \"%s\"",
-			      cg->subsystem, cg->value);
+			DEBUG("Set controller \"%s\" set to \"%s\"", cg->subsystem, cg->value);
 		}
 	}
 
@@ -2692,7 +2887,7 @@ static int bpf_device_cgroup_prepare(struct cgroup_ops *ops,
 				     const char *val)
 {
 #ifdef HAVE_STRUCT_BPF_CGROUP_DEV_CTX
-	struct device_item device_item = {0};
+	struct device_item device_item = {};
 	int ret;
 
 	if (strcmp("devices.allow", key) == 0 && *val == '/')
@@ -2700,9 +2895,7 @@ static int bpf_device_cgroup_prepare(struct cgroup_ops *ops,
 	else
 		ret = device_cgroup_rule_parse(&device_item, key, val);
 	if (ret < 0)
-		return log_error_errno(-1, EINVAL,
-				       "Failed to parse device string %s=%s",
-				       key, val);
+		return log_error_errno(-1, EINVAL, "Failed to parse device string %s=%s", key, val);
 
 	ret = bpf_list_add_device(conf, &device_item);
 	if (ret < 0)
@@ -2731,9 +2924,12 @@ __cgfsng_ops static bool cgfsng_setup_limits(struct cgroup_ops *ops,
 		return ret_set_errno(false, EINVAL);
 	conf = handler->conf;
 
-	if (lxc_list_empty(&conf->cgroup2))
-		return true;
 	cgroup_settings = &conf->cgroup2;
+	if (lxc_list_empty(cgroup_settings))
+		return true;
+
+	if (!pure_unified_layout(ops))
+		return log_warn_errno(true, EINVAL, "Ignoring cgroup2 limits on legacy cgroup system");
 
 	if (!ops->unified)
 		return false;
@@ -2743,26 +2939,20 @@ __cgfsng_ops static bool cgfsng_setup_limits(struct cgroup_ops *ops,
 		struct lxc_cgroup *cg = iterator->elem;
 		int ret;
 
-		if (strncmp("devices", cg->subsystem, 7) == 0) {
-			ret = bpf_device_cgroup_prepare(ops, conf, cg->subsystem,
-							cg->value);
-		} else {
-			ret = lxc_write_openat(h->container_full_path,
-					       cg->subsystem, cg->value,
-					       strlen(cg->value));
-			if (ret < 0)
-				return log_error_errno(false,
-						       errno, "Failed to set \"%s\" to \"%s\"",
-						       cg->subsystem, cg->value);
-		}
+		if (strncmp("devices", cg->subsystem, 7) == 0)
+			ret = bpf_device_cgroup_prepare(ops, conf, cg->subsystem, cg->value);
+		else
+			ret = lxc_write_openat(h->container_limit_path, cg->subsystem, cg->value, strlen(cg->value));
+		if (ret < 0)
+			return log_error_errno(false, errno, "Failed to set \"%s\" to \"%s\"", cg->subsystem, cg->value);
+
 		TRACE("Set \"%s\" to \"%s\"", cg->subsystem, cg->value);
 	}
 
 	return log_info(true, "Limits for the unified cgroup hierarchy have been setup");
 }
 
-__cgfsng_ops bool cgfsng_devices_activate(struct cgroup_ops *ops,
-					  struct lxc_handler *handler)
+__cgfsng_ops static bool cgfsng_devices_activate(struct cgroup_ops *ops, struct lxc_handler *handler)
 {
 #ifdef HAVE_STRUCT_BPF_CGROUP_DEV_CTX
 	__do_bpf_program_free struct bpf_program *devices = NULL;
@@ -2792,40 +2982,42 @@ __cgfsng_ops bool cgfsng_devices_activate(struct cgroup_ops *ops,
 
 	devices = bpf_program_new(BPF_PROG_TYPE_CGROUP_DEVICE);
 	if (!devices)
-		return log_error_errno(false, ENOMEM,
-				       "Failed to create new bpf program");
+		return log_error_errno(false, ENOMEM, "Failed to create new bpf program");
 
 	ret = bpf_program_init(devices);
 	if (ret)
-		return log_error_errno(false, ENOMEM,
-				       "Failed to initialize bpf program");
+		return log_error_errno(false, ENOMEM, "Failed to initialize bpf program");
 
 	lxc_list_for_each(it, &conf->devices) {
 		struct device_item *cur = it->elem;
 
 		ret = bpf_program_append_device(devices, cur);
 		if (ret)
-			return log_error_errno(false,
-					       ENOMEM, "Failed to add new rule to bpf device program: type %c, major %d, minor %d, access %s, allow %d, global_rule %d",
-					       cur->type, cur->major,
-					       cur->minor, cur->access,
-					       cur->allow, cur->global_rule);
+			return log_error_errno(false, ENOMEM, "Failed to add new rule to bpf device program: type %c, major %d, minor %d, access %s, allow %d, global_rule %d",
+					       cur->type,
+					       cur->major,
+					       cur->minor,
+					       cur->access,
+					       cur->allow,
+					       cur->global_rule);
 		TRACE("Added rule to bpf device program: type %c, major %d, minor %d, access %s, allow %d, global_rule %d",
-		      cur->type, cur->major, cur->minor, cur->access,
-		      cur->allow, cur->global_rule);
+		      cur->type,
+		      cur->major,
+		      cur->minor,
+		      cur->access,
+		      cur->allow,
+		      cur->global_rule);
 	}
 
 	ret = bpf_program_finalize(devices);
 	if (ret)
-		return log_error_errno(false, ENOMEM,
-				       "Failed to finalize bpf program");
+		return log_error_errno(false, ENOMEM, "Failed to finalize bpf program");
 
 	ret = bpf_program_cgroup_attach(devices, BPF_CGROUP_DEVICE,
-					unified->container_full_path,
+					unified->container_limit_path,
 					BPF_F_ALLOW_MULTI);
 	if (ret)
-		return log_error_errno(false, ENOMEM,
-				       "Failed to attach bpf program");
+		return log_error_errno(false, ENOMEM, "Failed to attach bpf program");
 
 	/* Replace old bpf program. */
 	devices_old = move_ptr(conf->cgroup2_devices);
@@ -2835,15 +3027,14 @@ __cgfsng_ops bool cgfsng_devices_activate(struct cgroup_ops *ops,
 	return true;
 }
 
-bool __cgfsng_delegate_controllers(struct cgroup_ops *ops, const char *cgroup)
+static bool __cgfsng_delegate_controllers(struct cgroup_ops *ops, const char *cgroup)
 {
 	__do_free char *add_controllers = NULL, *base_path = NULL;
+	__do_free_string_list char **parts = NULL;
 	struct hierarchy *unified = ops->unified;
 	ssize_t parts_len;
 	char **it;
 	size_t full_len = 0;
-	char **parts = NULL;
-	bool bret = false;
 
 	if (!ops->hierarchies || !pure_unified_layout(ops) ||
 	    !unified->controllers[0])
@@ -2871,7 +3062,7 @@ bool __cgfsng_delegate_controllers(struct cgroup_ops *ops, const char *cgroup)
 
 	parts = lxc_string_split(cgroup, '/');
 	if (!parts)
-		goto on_error;
+		return false;
 
 	parts_len = lxc_array_len((void **)parts);
 	if (parts_len > 0)
@@ -2887,20 +3078,15 @@ bool __cgfsng_delegate_controllers(struct cgroup_ops *ops, const char *cgroup)
 		target = must_make_path(base_path, "cgroup.subtree_control", NULL);
 		ret = lxc_writeat(-1, target, add_controllers, full_len);
 		if (ret < 0)
-			log_error_errno(goto on_error,
-					errno, "Could not enable \"%s\" controllers in the unified cgroup \"%s\"",
-					add_controllers, target);
+			return log_error_errno(false, errno, "Could not enable \"%s\" controllers in the unified cgroup \"%s\"",
+					       add_controllers, target);
 		TRACE("Enable \"%s\" controllers in the unified cgroup \"%s\"", add_controllers, target);
 	}
 
-	bret = true;
-
-on_error:
-	lxc_free_array((void **)parts, free);
-	return bret;
+	return true;
 }
 
-__cgfsng_ops bool cgfsng_monitor_delegate_controllers(struct cgroup_ops *ops)
+__cgfsng_ops static bool cgfsng_monitor_delegate_controllers(struct cgroup_ops *ops)
 {
 	if (!ops)
 		return ret_set_errno(false, ENOENT);
@@ -2908,7 +3094,7 @@ __cgfsng_ops bool cgfsng_monitor_delegate_controllers(struct cgroup_ops *ops)
 	return __cgfsng_delegate_controllers(ops, ops->monitor_cgroup);
 }
 
-__cgfsng_ops bool cgfsng_payload_delegate_controllers(struct cgroup_ops *ops)
+__cgfsng_ops static bool cgfsng_payload_delegate_controllers(struct cgroup_ops *ops)
 {
 	if (!ops)
 		return ret_set_errno(false, ENOENT);
@@ -2955,10 +3141,11 @@ static void cg_unified_delegate(char ***delegate)
 			idx = append_null_to_list((void ***)delegate);
 			(*delegate)[idx] = must_copy_string(*p);
 		}
-		log_warn_errno(return, errno, "Failed to read /sys/kernel/cgroup/delegate");
+		SYSWARN("Failed to read /sys/kernel/cgroup/delegate");
+		return;
 	}
 
-	lxc_iterate_parts (token, buf, " \t\n") {
+	lxc_iterate_parts(token, buf, " \t\n") {
 		/*
 		 * We always need to chown this for both cgroup and
 		 * cgroup2.
@@ -2976,12 +3163,11 @@ static void cg_unified_delegate(char ***delegate)
  */
 static int cg_hybrid_init(struct cgroup_ops *ops, bool relative, bool unprivileged)
 {
-	__do_free char *basecginfo = NULL;
-	__do_free char *line = NULL;
+	__do_free char *basecginfo = NULL, *line = NULL;
+	__do_free_string_list char **klist = NULL, **nlist = NULL;
 	__do_fclose FILE *f = NULL;
 	int ret;
 	size_t len = 0;
-	char **klist = NULL, **nlist = NULL;
 
 	/* Root spawned containers escape the current cgroup, so use init's
 	 * cgroups as our base in that case.
@@ -2997,18 +3183,18 @@ static int cg_hybrid_init(struct cgroup_ops *ops, bool relative, bool unprivileg
 	if (ret < 0)
 		return log_error_errno(-1, errno, "Failed to retrieve available legacy cgroup controllers");
 
-	f = fopen("/proc/self/mountinfo", "r");
+	f = fopen("/proc/self/mountinfo", "re");
 	if (!f)
 		return log_error_errno(-1, errno, "Failed to open \"/proc/self/mountinfo\"");
 
 	lxc_cgfsng_print_basecg_debuginfo(basecginfo, klist, nlist);
 
 	while (getline(&line, &len, f) != -1) {
+		__do_free char *base_cgroup = NULL, *mountpoint = NULL;
+		__do_free_string_list char **controller_list = NULL;
 		int type;
 		bool writeable;
 		struct hierarchy *new;
-		char *base_cgroup = NULL, *mountpoint = NULL;
-		char **controller_list = NULL;
 
 		type = get_cgroup_version(line);
 		if (type == 0)
@@ -3035,19 +3221,25 @@ static int cg_hybrid_init(struct cgroup_ops *ops, bool relative, bool unprivileg
 			continue;
 
 		if (type == CGROUP_SUPER_MAGIC)
-			if (controller_list_is_dup(ops->hierarchies, controller_list))
-				log_trace_errno(goto next, EEXIST, "Skipping duplicating controller");
+			if (controller_list_is_dup(ops->hierarchies, controller_list)) {
+				TRACE("Skipping duplicating controller");
+				continue;
+			}
 
 		mountpoint = cg_hybrid_get_mountpoint(line);
-		if (!mountpoint)
-			log_error_errno(goto next, EINVAL, "Failed parsing mountpoint from \"%s\"", line);
+		if (!mountpoint) {
+			ERROR("Failed parsing mountpoint from \"%s\"", line);
+			continue;
+		}
 
 		if (type == CGROUP_SUPER_MAGIC)
 			base_cgroup = cg_hybrid_get_current_cgroup(basecginfo, controller_list[0], CGROUP_SUPER_MAGIC);
 		else
 			base_cgroup = cg_hybrid_get_current_cgroup(basecginfo, NULL, CGROUP2_SUPER_MAGIC);
-		if (!base_cgroup)
-			log_error_errno(goto next, EINVAL, "Failed to find current cgroup");
+		if (!base_cgroup) {
+			ERROR("Failed to find current cgroup");
+			continue;
+		}
 
 		trim(base_cgroup);
 		prune_init_scope(base_cgroup);
@@ -3055,8 +3247,10 @@ static int cg_hybrid_init(struct cgroup_ops *ops, bool relative, bool unprivileg
 			writeable = test_writeable_v2(mountpoint, base_cgroup);
 		else
 			writeable = test_writeable_v1(mountpoint, base_cgroup);
-		if (!writeable)
-			log_trace_errno(goto next, EROFS, "The %s group is not writeable", base_cgroup);
+		if (!writeable) {
+			TRACE("The %s group is not writeable", base_cgroup);
+			continue;
+		}
 
 		if (type == CGROUP2_SUPER_MAGIC) {
 			char *cgv2_ctrl_path;
@@ -3075,26 +3269,18 @@ static int cg_hybrid_init(struct cgroup_ops *ops, bool relative, bool unprivileg
 		}
 
 		/* Exclude all controllers that cgroup use does not want. */
-		if (!cgroup_use_wants_controllers(ops, controller_list))
-			log_trace_errno(goto next, EINVAL, "Skipping controller");
+		if (!cgroup_use_wants_controllers(ops, controller_list)) {
+			TRACE("Skipping controller");
+			continue;
+		}
 
-		new = add_hierarchy(&ops->hierarchies, controller_list, mountpoint, base_cgroup, type);
+		new = add_hierarchy(&ops->hierarchies, move_ptr(controller_list), move_ptr(mountpoint), move_ptr(base_cgroup), type);
 		if (type == CGROUP2_SUPER_MAGIC && !ops->unified) {
 			if (unprivileged)
 				cg_unified_delegate(&new->cgroup2_chown);
 			ops->unified = new;
 		}
-
-		continue;
-
-	next:
-		free_string_list(controller_list);
-		free(mountpoint);
-		free(base_cgroup);
 	}
-
-	free_string_list(klist);
-	free_string_list(nlist);
 
 	TRACE("Writable cgroup hierarchies:");
 	lxc_cgfsng_print_hierarchies(ops);
@@ -3112,8 +3298,8 @@ static int cg_hybrid_init(struct cgroup_ops *ops, bool relative, bool unprivileg
 static char *cg_unified_get_current_cgroup(bool relative)
 {
 	__do_free char *basecginfo = NULL;
+	char *copy;
 	char *base_cgroup;
-	char *copy = NULL;
 
 	if (!relative && (geteuid() == 0))
 		basecginfo = read_file("/proc/1/cgroup");
@@ -3124,18 +3310,14 @@ static char *cg_unified_get_current_cgroup(bool relative)
 
 	base_cgroup = strstr(basecginfo, "0::/");
 	if (!base_cgroup)
-		goto cleanup_on_err;
+		return NULL;
 
 	base_cgroup = base_cgroup + 3;
 	copy = copy_to_eol(base_cgroup);
 	if (!copy)
-		goto cleanup_on_err;
+		return NULL;
 
-cleanup_on_err:
-	if (copy)
-		trim(copy);
-
-	return copy;
+	return trim(copy);
 }
 
 static int cg_unified_init(struct cgroup_ops *ops, bool relative,
@@ -3190,6 +3372,7 @@ static int cg_unified_init(struct cgroup_ops *ops, bool relative,
 
 	ops->cgroup_layout = CGROUP_LAYOUT_UNIFIED;
 	ops->unified = new;
+
 	return CGROUP2_SUPER_MAGIC;
 }
 
@@ -3230,14 +3413,9 @@ __cgfsng_ops static int cgfsng_data_init(struct cgroup_ops *ops)
 
 	/* copy system-wide cgroup information */
 	cgroup_pattern = lxc_global_config_value("lxc.cgroup.pattern");
-	if (!cgroup_pattern) {
-		/* lxc.cgroup.pattern is only NULL on error. */
-		ERROR("Failed to retrieve cgroup pattern");
-		return ret_set_errno(-1, ENOMEM);
-	}
-
-	/*记录配置的cgroup_pattern*/
-	ops->cgroup_pattern = must_copy_string(cgroup_pattern);
+	if (cgroup_pattern && strcmp(cgroup_pattern, "") != 0)
+		/*记录配置的cgroup_pattern*/
+		ops->cgroup_pattern = must_copy_string(cgroup_pattern);
 
 	return 0;
 }
@@ -3282,8 +3460,8 @@ struct cgroup_ops *cgfsng_ops_init(struct lxc_conf *conf)
 	cgfsng_ops->attach = cgfsng_attach;
 	cgfsng_ops->chown = cgfsng_chown;
 	cgfsng_ops->mount = cgfsng_mount;
-	cgfsng_ops->nrtasks = cgfsng_nrtasks;
 	cgfsng_ops->devices_activate = cgfsng_devices_activate;
+	cgfsng_ops->get_limiting_cgroup = cgfsng_get_limiting_cgroup;
 
 	return move_ptr(cgfsng_ops);
 }

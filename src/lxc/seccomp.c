@@ -7,6 +7,7 @@
 #include <seccomp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/epoll.h>
 #include <sys/mount.h>
 #include <sys/utsname.h>
 
@@ -38,12 +39,7 @@ lxc_log_define(seccomp, lxc);
 static inline int __seccomp(unsigned int operation, unsigned int flags,
 			  void *args)
 {
-#ifdef __NR_seccomp
 	return syscall(__NR_seccomp, operation, flags, args);
-#else
-	errno = ENOSYS;
-	return -1;
-#endif
 }
 #endif
 
@@ -104,7 +100,7 @@ static uint32_t get_v2_default_action(char *line)
 	while (*line == ' ')
 		line++;
 
-	/* After 'whitelist' or 'blacklist' comes default behavior. */
+	/* After 'allowlist' or 'denylist' comes default behavior. */
 	if (strncmp(line, "kill", 4) == 0) {
 		ret_action = SCMP_ACT_KILL;
 	} else if (strncmp(line, "errno", 5) == 0) {
@@ -322,7 +318,7 @@ enum lxc_hostarch_t {
 	lxc_seccomp_arch_unknown = 999,
 };
 
-int get_hostarch(void)
+static int get_hostarch(void)
 {
 	struct utsname uts;
 	if (uname(&uts) < 0) {
@@ -356,8 +352,8 @@ int get_hostarch(void)
 	return lxc_seccomp_arch_unknown;
 }
 
-scmp_filter_ctx get_new_ctx(enum lxc_hostarch_t n_arch,
-			    uint32_t default_policy_action, bool *needs_merge)
+static scmp_filter_ctx get_new_ctx(enum lxc_hostarch_t n_arch, uint32_t default_policy_action,
+				   bool *needs_merge)
 {
 	int ret;
 	uint32_t arch;
@@ -490,8 +486,8 @@ scmp_filter_ctx get_new_ctx(enum lxc_hostarch_t n_arch,
 	return ctx;
 }
 
-bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
-			 struct seccomp_v2_rule *rule)
+static bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
+				struct seccomp_v2_rule *rule)
 {
 	int i, nr, ret;
 	struct scmp_arg_cmp arg_cmp[6];
@@ -567,6 +563,27 @@ bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
 }
 
 /*
+ * It is unfortunate, but we can't simply remove those terms since this would
+ * break way too many users.
+ */
+#define BACKWARDCOMPAT_TERMINOLOGY_DENYLIST "blacklist"
+#define BACKWARDCOMPAT_TERMINOLOGY_ALLOWLIST "whitelist"
+
+static inline bool is_denylist(const char *type)
+{
+	return strnequal(type, "denylist", STRLITERALLEN("denylist")) ||
+	       strnequal(type, BACKWARDCOMPAT_TERMINOLOGY_DENYLIST,
+			 STRLITERALLEN(BACKWARDCOMPAT_TERMINOLOGY_DENYLIST));
+}
+
+static inline bool is_allowlist(const char *type)
+{
+	return strnequal(type, "allowlist", STRLITERALLEN("allowlist")) ||
+	       strnequal(type, BACKWARDCOMPAT_TERMINOLOGY_ALLOWLIST,
+			 STRLITERALLEN(BACKWARDCOMPAT_TERMINOLOGY_ALLOWLIST));
+}
+
+/*
  * v2 consists of
  * [x86]
  * open
@@ -585,7 +602,7 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 	int ret;
 	char *p;
 	enum lxc_hostarch_t cur_rule_arch, native_arch;
-	bool blacklist = false;
+	bool denylist = false;
 	uint32_t default_policy_action = -1, default_rule_action = -1;
 	struct seccomp_v2_rule rule;
 	struct scmp_ctx_info {
@@ -594,12 +611,10 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 		bool needs_merge[3];
 	} ctx;
 
-	if (strncmp(line, "blacklist", 9) == 0)
-		blacklist = true;
-	else if (strncmp(line, "whitelist", 9) != 0) {
-		ERROR("Bad seccomp policy style \"%s\"", line);
-		return -1;
-	}
+	if (is_denylist(line))
+		denylist = true;
+	else if (!is_allowlist(line))
+		return log_error(-EINVAL, "Bad seccomp policy style \"%s\"", line);
 
 	p = strchr(line, ' ');
 	if (p) {
@@ -608,8 +623,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			return -1;
 	}
 
-	/* for blacklist, allow any syscall which has no rule */
-	if (blacklist) {
+	/* for denylist, allow any syscall which has no rule */
+	if (denylist) {
 		if (default_policy_action == -1)
 			default_policy_action = SCMP_ACT_ALLOW;
 
@@ -1084,7 +1099,7 @@ static int parse_config_v2(FILE *f, char *line, struct lxc_conf *conf)
  * the second line has some directives
  * then comes policy subject to the directives
  * right now version must be '1' or '2'
- * the directives must include 'whitelist'(version == 1 or 2) or 'blacklist'
+ * the directives must include 'allowlist'(version == 1 or 2) or 'denylist'
  * (version == 2) and can include 'debug' (though debug is not yet supported).
  */
 static int parse_config(FILE *f, struct lxc_conf *conf)
@@ -1104,8 +1119,8 @@ static int parse_config(FILE *f, struct lxc_conf *conf)
 		goto bad_line;
 	}
 
-	if (version == 1 && !strstr(line, "whitelist")) {
-		ERROR("Only whitelist policy is supported");
+	if (version == 1 && !strstr(line, "allowlist")) {
+		ERROR("Only allowlist policy is supported");
 		goto bad_line;
 	}
 
@@ -1133,16 +1148,16 @@ bad_line:
  */
 static bool use_seccomp(const struct lxc_conf *conf)
 {
+	__do_free char *line = NULL;
+	__do_fclose FILE *f = NULL;
 	int ret, v;
-	FILE *f;
 	size_t line_bufsz = 0;
-	char *line = NULL;
 	bool already_enabled = false, found = false;
 
 	if (conf->seccomp.allow_nesting > 0)
 		return true;
 
-	f = fopen("/proc/self/status", "r");
+	f = fopen("/proc/self/status", "re");
 	if (!f)
 		return true;
 
@@ -1157,8 +1172,6 @@ static bool use_seccomp(const struct lxc_conf *conf)
 			break;
 		}
 	}
-	free(line);
-	fclose(f);
 
 	if (!found) {
 		INFO("Seccomp is not enabled in the kernel");
@@ -1175,8 +1188,8 @@ static bool use_seccomp(const struct lxc_conf *conf)
 
 int lxc_read_seccomp_config(struct lxc_conf *conf)
 {
+	__do_fclose FILE *f = NULL;
 	int ret;
-	FILE *f;
 
 	if (!conf->seccomp.seccomp)
 		return 0;
@@ -1217,16 +1230,13 @@ int lxc_read_seccomp_config(struct lxc_conf *conf)
 	}
 #endif
 
-	f = fopen(conf->seccomp.seccomp, "r");
+	f = fopen(conf->seccomp.seccomp, "re");
 	if (!f) {
 		SYSERROR("Failed to open seccomp policy file %s", conf->seccomp.seccomp);
 		return -1;
 	}
 
-	ret = parse_config(f, conf);
-	fclose(f);
-
-	return ret;
+	return parse_config(f, conf);
 }
 
 int lxc_seccomp_load(struct lxc_conf *conf)
@@ -1304,7 +1314,7 @@ void lxc_seccomp_free(struct lxc_seccomp *seccomp)
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
 static int seccomp_notify_reconnect(struct lxc_handler *handler)
 {
-	__do_close_prot_errno int notify_fd = -EBADF;
+	__do_close int notify_fd = -EBADF;
 
 	close_prot_errno_disarm(handler->conf->seccomp.notifier.proxy_fd);
 
@@ -1343,11 +1353,11 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 {
 
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
-	__do_close_prot_errno int fd_pid = -EBADF;
-	__do_close_prot_errno int fd_mem = -EBADF;
+	__do_close int fd_pid = -EBADF;
+	__do_close int fd_mem = -EBADF;
 	int ret;
 	ssize_t bytes;
-	int send_fd_list[2];
+	int send_fd_list[3];
 	struct iovec iov[4];
 	size_t iov_len, msg_base_size, msg_full_size;
 	char mem_path[6 /* /proc/ */
@@ -1364,6 +1374,13 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 	char *cookie = conf->seccomp.notifier.cookie;
 	uint64_t req_id;
 
+	if (events & EPOLLHUP) {
+		lxc_mainloop_del_handler(descr, fd);
+		close(fd);
+		return log_trace(0, "Removing seccomp notifier fd %d", fd);
+	}
+
+	memset(req, 0, sizeof(*req));
 	ret = seccomp_notify_receive(fd, req);
 	if (ret) {
 		SYSERROR("Failed to read seccomp notification");
@@ -1443,10 +1460,10 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 
 	send_fd_list[0] = fd_pid;
 	send_fd_list[1] = fd_mem;
+	send_fd_list[2] = fd;
 
 retry:
-	bytes = lxc_abstract_unix_send_fds_iov(listener_proxy_fd, send_fd_list,
-					       2, iov, iov_len);
+	bytes = lxc_abstract_unix_send_fds_iov(listener_proxy_fd, send_fd_list, 3, iov, iov_len);
 	if (bytes != (ssize_t)msg_full_size) {
 		SYSERROR("Failed to forward message to seccomp proxy");
 		if (!reconnected) {
@@ -1488,10 +1505,8 @@ retry:
 		SYSERROR("Failed to send seccomp notification");
 
 out:
-	return 0;
-#else
-	return -ENOSYS;
 #endif
+	return LXC_MAINLOOP_CONTINUE;
 }
 
 void seccomp_conf_init(struct lxc_conf *conf)
@@ -1519,7 +1534,7 @@ int lxc_seccomp_setup_proxy(struct lxc_seccomp *seccomp,
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
 	if (seccomp->notifier.wants_supervision &&
 	    seccomp->notifier.proxy_addr.sun_path[1] != '\0') {
-		__do_close_prot_errno int notify_fd = -EBADF;
+		__do_close int notify_fd = -EBADF;
 		int ret;
 
 		notify_fd = lxc_unix_connect_type(&seccomp->notifier.proxy_addr,
