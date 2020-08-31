@@ -44,7 +44,7 @@ struct lxc_handler {
 	};
 
 	/* File descriptor to pin the rootfs for privileged containers. */
-	int pinfd;
+	int pinfd;//pin住rootfs所使用的fd
 
 	/* Signal file descriptor. */
 	int sigfd;//信号对应的fd
@@ -91,6 +91,7 @@ struct lxc_handler {
 	/* The monitor's pid. */
 	pid_t monitor_pid;
 
+	//monitor进程/proc/self/status文件fd
 	int monitor_status_fd;
 
 	/* Whether the child has already exited. */

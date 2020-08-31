@@ -205,6 +205,7 @@ ssize_t lxc_read_nointr_expect(int fd, void *buf, size_t count,
 {
 	ssize_t ret;
 
+	//自fd中读取count字节到buf中
 	ret = lxc_read_nointr(fd, buf, count);
 	if (ret < 0)
 		return ret;
@@ -212,6 +213,7 @@ ssize_t lxc_read_nointr_expect(int fd, void *buf, size_t count,
 	if ((size_t)ret != count)
 		return -1;
 
+	/*读取到的内容必须与expected_buf的内容相同*/
 	if (expected_buf && memcmp(buf, expected_buf, count) != 0)
 		return ret_set_errno(-1, EINVAL);
 

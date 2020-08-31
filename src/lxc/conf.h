@@ -152,7 +152,7 @@ struct lxc_tty_info {
 struct lxc_rootfs {
 	int mntpt_fd;
 	int dev_mntpt_fd;
-	char *path;
+	char *path;//rootfs对应的目录
 	char *mount;
 	char *bdev_type;
 	char *options;
@@ -362,6 +362,7 @@ struct lxc_conf {
 
 	/* list of environment variables we'll add to the container when
 	 * started */
+	//需要在容器启动时注入的环境变量
 	struct lxc_list environment;
 
 	/* text representation of the config file */

@@ -55,6 +55,7 @@ bool attach_block_device(struct lxc_conf *conf)
 
 	path = conf->rootfs.path;
 	if (!requires_nbd(path))
+		/*非nbd，退出*/
 		return true;
 
 	path = strchr(path, ':');

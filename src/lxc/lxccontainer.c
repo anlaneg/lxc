@@ -1131,6 +1131,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	}
 
 reboot:
+	//初始化container handler
 	if (conf->reboot == REBOOT_INIT) {
 		/* initialize handler */
 		handler = lxc_init_handler(handler, c->name, conf, c->config_path, c->daemonize);
@@ -1140,6 +1141,7 @@ reboot:
 		}
 	}
 
+	//如果为daemon,则关闭非ignore的fd
 	ret = inherit_fds(handler, c->daemonize);
 	if (ret < 0) {
 		lxc_put_handler(handler);

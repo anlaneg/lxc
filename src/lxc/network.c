@@ -200,6 +200,7 @@ static int lxc_ip_neigh_proxy(__u16 nlmsg_type, int family, int ifindex, void *d
 
 	addrlen = family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr);
 
+	/*打开netlink*/
 	err = netlink_open(nlh_ptr, NETLINK_ROUTE);
 	if (err)
 		return err;
@@ -230,6 +231,7 @@ static int lxc_ip_neigh_proxy(__u16 nlmsg_type, int family, int ifindex, void *d
 	return netlink_transaction(nlh_ptr, nlmsg, answer);
 }
 
+//检查ifname的指定ip版本是否已置为forwarding状态
 static int lxc_is_ip_forwarding_enabled(const char *ifname, int family)
 {
 	int ret;
@@ -239,6 +241,7 @@ static int lxc_is_ip_forwarding_enabled(const char *ifname, int family)
 	if (family != AF_INET && family != AF_INET6)
 		return ret_set_errno(-1, EINVAL);
 
+	/*检查接口ifname的ipv4/ipv6是否置为forwarding状态*/
 	ret = snprintf(path, sizeof(path), "/proc/sys/net/%s/conf/%s/%s",
 		       family == AF_INET ? "ipv4" : "ipv6", ifname,
 		       "forwarding");
@@ -3283,6 +3286,7 @@ static int lxc_setup_l2proxy(struct lxc_netdev *netdev) {
 	int err = 0;
 	unsigned int lo_ifindex = 0, link_ifindex = 0;
 
+	//取netdev对应的ifindex
 	link_ifindex = if_nametoindex(netdev->link);
 	if (link_ifindex == 0)
 		return log_error_errno(-1, errno, "Failed to retrieve ifindex for \"%s\" l2proxy setup", netdev->link);
@@ -3291,6 +3295,7 @@ static int lxc_setup_l2proxy(struct lxc_netdev *netdev) {
 	/* If IPv4 addresses are specified, then check that sysctl is configured correctly. */
 	if (!lxc_list_empty(&netdev->ipv4)) {
 		/* Check for net.ipv4.conf.[link].forwarding=1 */
+		//检查此link是否开启了ipv4的forwarding
 		if (lxc_is_ip_forwarding_enabled(netdev->link, AF_INET) < 0)
 			return log_error_errno(-1, EINVAL, "Requires sysctl net.ipv4.conf.%s.forwarding=1", netdev->link);
 	}
@@ -3298,10 +3303,12 @@ static int lxc_setup_l2proxy(struct lxc_netdev *netdev) {
 	/* If IPv6 addresses are specified, then check that sysctl is configured correctly. */
 	if (!lxc_list_empty(&netdev->ipv6)) {
 		/* Check for net.ipv6.conf.[link].proxy_ndp=1 */
+		/*检查此link的ipv6是否已配置proxy_ndp*/
 		if (lxc_is_ip_neigh_proxy_enabled(netdev->link, AF_INET6) < 0)
 			return log_error_errno(-1, EINVAL, "Requires sysctl net.ipv6.conf.%s.proxy_ndp=1", netdev->link);
 
 		/* Check for net.ipv6.conf.[link].forwarding=1 */
+		//检查此link是否开启了ipv6的forwarding
 		if (lxc_is_ip_forwarding_enabled(netdev->link, AF_INET6) < 0)
 			return log_error_errno(-1, EINVAL, "Requires sysctl net.ipv6.conf.%s.forwarding=1", netdev->link);
 	}
@@ -3320,9 +3327,11 @@ static int lxc_setup_l2proxy(struct lxc_netdev *netdev) {
 
 	lxc_list_for_each_safe(cur, &netdev->ipv4, next) {
 		inet4dev = cur->elem;
+		//ipv4地址转bufinet4
 		if (!inet_ntop(AF_INET, &inet4dev->addr, bufinet4, sizeof(bufinet4)))
 			return ret_set_errno(-1, -errno);
 
+		//在此link上代答inet4dev->addr地址的mac？
 		if (lxc_ip_neigh_proxy(RTM_NEWNEIGH, AF_INET, link_ifindex, &inet4dev->addr) < 0)
 			return ret_set_errno(-1, EINVAL);
 
@@ -3466,11 +3475,13 @@ static int lxc_create_network_priv(struct lxc_handler *handler)
 	lxc_list_for_each(iterator, network) {
 		struct lxc_netdev *netdev = iterator->elem;
 
+		//netdev类型校验
 		if (netdev->type < 0 || netdev->type > LXC_NET_MAXCONFTYPE)
 			return log_error_errno(-1, EINVAL, "Invalid network configuration type %d", netdev->type);
 
 		/* Setup l2proxy entries if enabled and used with a link property */
 		if (netdev->l2proxy && !is_empty_string(netdev->link)) {
+			//使能netdev上的arp,nd代理
 			if (lxc_setup_l2proxy(netdev))
 				return log_error_errno(-1, errno, "Failed to setup l2proxy");
 		}
@@ -4004,9 +4015,11 @@ int lxc_network_recv_from_parent(struct lxc_handler *handler)
 		int ret;
 		struct lxc_netdev *netdev = iterator->elem;
 
+		//跳过空的netdev类型
 		if (!network_requires_advanced_setup(netdev->type))
 			continue;
 
+		//收取父进程发送过来的接口名称，created_name
 		ret = lxc_recv_nointr(data_sock, netdev->name, IFNAMSIZ, 0);
 		if (ret < 0)
 			return -1;
@@ -4247,5 +4260,6 @@ int lxc_create_network(struct lxc_handler *handler)
 		return lxc_network_move_created_netdev_priv(handler);
 	}
 
+	//非root用户，创建network
 	return lxc_create_network_unpriv(handler);
 }

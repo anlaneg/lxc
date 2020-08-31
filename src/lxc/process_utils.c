@@ -129,6 +129,7 @@ pid_t lxc_raw_clone_cb(int (*fn)(void *), void *args, unsigned long flags,
 	 * handlers and other stuff when exec() fails.
 	 */
 	if (pid == 0)
+		/*子进程调用fn函数，完成工作，并退出*/
 		_exit(fn(args));
 
 	return pid;

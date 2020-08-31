@@ -524,6 +524,7 @@ int pin_rootfs(const char *rootfs)
 	if (rootfs == NULL || strlen(rootfs) == 0)
 		return -2;
 
+	/*取rootfs对应的绝对地址*/
 	absrootfs = realpath(rootfs, NULL);
 	if (!absrootfs)
 		return -2;
@@ -532,6 +533,7 @@ int pin_rootfs(const char *rootfs)
 	if (ret < 0)
 		return -1;
 
+	/*rootfs必须指向的是目录*/
 	if (!S_ISDIR(s.st_mode))
 		return -2;
 
@@ -539,6 +541,7 @@ int pin_rootfs(const char *rootfs)
 	if (ret < 0 || (size_t)ret >= sizeof(absrootfspin))
 		return -1;
 
+	/*创建.lxc-keep文件*/
 	fd = open(absrootfspin, O_CREAT | O_RDWR, S_IWUSR | S_IRUSR | O_CLOEXEC);
 	if (fd < 0)
 		return fd;
@@ -547,11 +550,14 @@ int pin_rootfs(const char *rootfs)
 	if (ret < 0)
 		return fd;
 
+	/*.lxc-keep文件系统不得为nfs*/
 	if (sfs.f_type == NFS_SUPER_MAGIC)
 		return log_debug(fd, "Rootfs on NFS, not unlinking pin file \"%s\"", absrootfspin);
 
+	/*移除.lxc-keep文件*/
 	(void)unlink(absrootfspin);
 
+	/*返回.lxc-keep文件对应fd*/
 	return fd;
 }
 

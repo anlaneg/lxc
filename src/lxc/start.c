@@ -493,21 +493,23 @@ int lxc_serve_state_clients(const char *name, struct lxc_handler *handler,
 	return 0;
 }
 
-static int lxc_serve_state_socket_pair(const char *name,
+static int lxc_serve_state_socket_pair(const char *name/*容器名称*/,
 				       struct lxc_handler *handler,
-				       lxc_state_t state)
+				       lxc_state_t state/*要设置的状态*/)
 {
 	ssize_t ret;
 
 	if (!handler->daemonize ||
             handler->state_socket_pair[1] < 0 ||
 	    state == STARTING)
+		/*starting状态直接返回*/
 		return 0;
 
 	/* Close read end of the socket pair. */
 	close_prot_errno_disarm(handler->state_socket_pair[0]);
 
 again:
+	//写state_socket_pair设置容器状态
 	ret = lxc_abstract_unix_send_credential(handler->state_socket_pair[1],
 						&(int){state}, sizeof(int));
 	if (ret < 0) {
@@ -531,6 +533,7 @@ again:
 	return 0;
 }
 
+//设置容器状态
 int lxc_set_state(const char *name, struct lxc_handler *handler,
 		  lxc_state_t state)
 {
@@ -742,13 +745,14 @@ on_error:
 	return NULL;
 }
 
-int lxc_init(const char *name, struct lxc_handler *handler)
+int lxc_init(const char *name/*容器名称*/, struct lxc_handler *handler)
 {
 	__do_close int status_fd = -EBADF;
 	int ret;
 	const char *loglevel;
 	struct lxc_conf *conf = handler->conf;
 
+	//取monitor进程pid
 	handler->monitor_pid = lxc_raw_getpid();
 	status_fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
 	if (status_fd < 0)
@@ -765,6 +769,7 @@ int lxc_init(const char *name, struct lxc_handler *handler)
 
 	//设置环境变量，并调用pre-start hook点
 	/* Start of environment variable setup for hooks. */
+	//容器名称环境变量
 	ret = setenv("LXC_NAME", name, 1);
 	if (ret < 0)
 		SYSERROR("Failed to set environment variable: LXC_NAME=%s", name);
@@ -805,6 +810,7 @@ int lxc_init(const char *name, struct lxc_handler *handler)
 			SYSERROR("Failed to set environment variable LXC_CGNS_AWARE=1");
 	}
 
+	//日志级别
 	loglevel = lxc_log_priority_to_string(lxc_log_get_level());
 	ret = setenv("LXC_LOG_LEVEL", loglevel, 1);
 	if (ret < 0)
@@ -1052,7 +1058,7 @@ void lxc_abort(struct lxc_handler *handler)
 	} while (ret > 0);
 }
 
-//子进程入口
+//容器入口
 static int do_start(void *data)
 {
 	struct lxc_handler *handler = data;
@@ -1289,6 +1295,7 @@ static int do_start(void *data)
 	 * below.
 	 */
 	lxc_list_for_each(iterator, &handler->conf->environment) {
+		//遍历并设置要存入的环境变量
 		ret = putenv((char *)iterator->elem);
 		if (ret < 0) {
 			SYSERROR("Failed to set environment variable: %s",
@@ -1610,8 +1617,10 @@ static inline int do_share_ns(void *arg)
 
 	for (i = 0; i < LXC_NS_MAX; i++) {
 		if (handler->nsfd[i] < 0)
+			/*跳过不存在的nsfd*/
 			continue;
 
+		//将当前进程关联到指定namespace
 		ret = setns(handler->nsfd[i], 0);
 		if (ret < 0) {
 			/*
@@ -1629,6 +1638,7 @@ static inline int do_share_ns(void *arg)
 
 	flags = handler->ns_on_clone_flags;
 	flags |= CLONE_PARENT;
+	/*返回子进程pid,促使子进程调用do_start完成工作*/
 	handler->pid = lxc_raw_clone_cb(do_start, handler, CLONE_PIDFD | flags,
 					&handler->pidfd);
 	if (handler->pid < 0)
@@ -1653,7 +1663,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	struct lxc_list *id_map;
 	const char *name = handler->name;
 	const char *lxcpath = handler->lxcpath;
-	bool share_ns = false;
+	bool share_ns = false;/*是否共享netns*/
 	struct lxc_conf *conf = handler->conf;
 	struct cgroup_ops *cgroup_ops = handler->cgroup_ops;
 
@@ -1708,6 +1718,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	 * If the container is unprivileged then skip rootfs pinning.
 	 */
 	if (!wants_to_map_ids) {
+		/*检查rootfs路径，并将其pin住*/
 		handler->pinfd = pin_rootfs(conf->rootfs.path);
 		if (handler->pinfd == -EBADF)
 			INFO("Failed to pin the rootfs for container \"%s\"", handler->name);
@@ -1715,9 +1726,10 @@ static int lxc_spawn(struct lxc_handler *handler)
 
 	/* Create a process in a new set of namespaces. */
 	if (share_ns) {
+		/*需要创建进程并使之置于一组namespace中*/
 		pid_t attacher_pid;
 
-		//产生子进程并调用do_share_ns函数
+		//产生子进程并使之调用do_share_ns函数，容器任务入口
 		attacher_pid = lxc_clone(do_share_ns, handler,
 					 CLONE_VFORK | CLONE_VM | CLONE_FILES, NULL);
 		if (attacher_pid < 0) {
@@ -1725,6 +1737,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 			goto out_delete_net;
 		}
 
+		//等待子进程退出
 		ret = wait_for_pid(attacher_pid);
 		if (ret < 0) {
 			SYSERROR("Intermediate process failed");
@@ -1782,6 +1795,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 		}
 
 		if (handler->pid == 0) {
+			/*子进程通过do_start开始容器的工作*/
 			(void)do_start(handler);
 			_exit(EXIT_FAILURE);
 		}
@@ -2243,8 +2257,8 @@ static struct lxc_operations start_ops = {
 	.post_start = post_start
 };
 
-int lxc_start(char *const argv[]/*容器名称*/, struct lxc_handler *handler,
-	      const char *lxcpath, bool daemonize, int *error_num)
+int lxc_start(char *const argv[]/*容器名称*/, struct lxc_handler *handler/*容器的handler*/,
+	      const char *lxcpath, bool daemonize/*是否采用daemon方式*/, int *error_num)
 {
     //启动参数
 	struct start_args start_arg = {
