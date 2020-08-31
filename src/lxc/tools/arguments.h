@@ -114,8 +114,10 @@ struct lxc_arguments {
 	bool ls_fancy;
 	bool ls_frozen;
 	bool ls_line;
+	/*列出运行的*/
 	bool ls_running;
 	bool ls_stopped;
+	/*列出定义的*/
 	bool ls_defined;
 
 	/* lxc-copy */

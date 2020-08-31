@@ -191,6 +191,7 @@ Options :\n\
 	.ls_nesting = 0,
 };
 
+/*显示lxc容器*/
 int main(int argc, char *argv[])
 {
 	int ret = EXIT_FAILURE;
@@ -356,8 +357,10 @@ static int ls_get(struct ls **m, size_t *size, const struct lxc_arguments *args,
 
 	/* Do not do more work than is necessary right from the start. */
 	if (args->ls_active || args->ls_frozen)
+		/*列出活跃的container名称*/
 		num = list_active_containers(path, &containers, NULL);
 	else
+		/*列出所有container名称*/
 		num = list_all_containers(path, &containers, NULL);
 	if (num == -1) {
 		num = 0;
@@ -370,6 +373,7 @@ static int ls_get(struct ls **m, size_t *size, const struct lxc_arguments *args,
 	struct lxc_container *c = NULL;
 	size_t i;
 
+	/*遍历所有container名称*/
 	for (i = 0; i < (size_t)num; i++) {
 		char *name = containers[i];
 
@@ -390,6 +394,7 @@ static int ls_get(struct ls **m, size_t *size, const struct lxc_arguments *args,
 				continue;
 		}
 
+		/*构造container对象*/
  		errno = 0;
 		c = lxc_container_new(name, path);
  		if ((errno == ENOMEM) && !c)
@@ -397,6 +402,7 @@ static int ls_get(struct ls **m, size_t *size, const struct lxc_arguments *args,
  		else if (!c)
  			continue;
 
+ 		/*container未定义，则跳过*/
 		if (args->ls_defined && !c->is_defined(c))
 			goto put_and_next;
 
@@ -406,6 +412,7 @@ static int ls_get(struct ls **m, size_t *size, const struct lxc_arguments *args,
 		if (!state_tmp)
 			state_tmp = "UNKNOWN";
 
+		/*container未运行中，则跳过*/
 		if (args->ls_running && !c->is_running(c))
 			goto put_and_next;
 

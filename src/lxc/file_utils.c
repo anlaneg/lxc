@@ -234,6 +234,7 @@ bool file_exists(const char *f)
 {
 	struct stat statbuf;
 
+	/*文件是否存在*/
 	return stat(f, &statbuf) == 0;
 }
 
@@ -558,6 +559,7 @@ bool exists_dir_at(int dir_fd, const char *path)
 	if (ret < 0)
 		return false;
 
+	/*path是否为dir*/
 	return S_ISDIR(sb.st_mode);
 }
 

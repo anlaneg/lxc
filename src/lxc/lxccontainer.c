@@ -93,6 +93,7 @@ static bool get_snappath_dir(struct lxc_container *c, char *snappath);
 static bool lxcapi_snapshot_destroy_all(struct lxc_container *c);
 static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file);
 
+/*检查容器配置文件是否存在*/
 static bool config_file_exists(const char *lxcpath, const char *cname)
 {
 	__do_free char *fname = NULL;
@@ -102,10 +103,12 @@ static bool config_file_exists(const char *lxcpath, const char *cname)
 	/* $lxcpath + '/' + $cname + '/config' + \0 */
 	len = strlen(lxcpath) + 1 + strlen(cname) + 1 + strlen(LXC_CONFIG_FNAME) + 1;
 	fname = must_realloc(NULL, len);
+	//容器名称+config
 	ret = snprintf(fname, len, "%s/%s/%s", lxcpath, cname, LXC_CONFIG_FNAME);
 	if (ret < 0 || (size_t)ret >= len)
 		return false;
 
+	/*检查文件是否存在*/
 	return file_exists(fname);
 }
 
@@ -2324,6 +2327,7 @@ static inline int container_cmp(struct lxc_container **first,
 	return strcmp((*first)->name, (*second)->name);
 }
 
+/*将cname字符串加入到names字符串数组中*/
 static bool add_to_array(char ***names, char *cname, int pos)
 {
 	char **newnames = realloc(*names, (pos+1) * sizeof(char *));
@@ -2344,6 +2348,7 @@ static bool add_to_array(char ***names, char *cname, int pos)
 	return true;
 }
 
+/*添加container到list中*/
 static bool add_to_clist(struct lxc_container ***list, struct lxc_container *c,
 			 int pos, bool sort)
 {
@@ -2358,17 +2363,20 @@ static bool add_to_clist(struct lxc_container ***list, struct lxc_container *c,
 
 	/* Sort the array as we will use binary search on it. */
 	if (sort)
+		/*按container->name针对newlist进行排序*/
 		qsort(newlist, pos + 1, sizeof(struct lxc_container *),
 		      (int (*)(const void *, const void *))container_cmp);
 
 	return true;
 }
 
+/*在names中查询cname*/
 static char** get_from_array(char ***names, char *cname, int size)
 {
 	return (char **)bsearch(&cname, *names, size, sizeof(char *), (int (*)(const void *, const void *))string_cmp);
 }
 
+/*在names中查询cname是否存在*/
 static bool array_contains(char ***names, char *cname, int size)
 {
 	if(get_from_array(names, cname, size) != NULL)
@@ -5499,7 +5507,7 @@ int lxc_get_wait_states(const char **states)
  * These next two could probably be done smarter with reusing a common function
  * with different iterators and tests...
  */
-int list_defined_containers(const char *lxcpath, char ***names, struct lxc_container ***cret)
+int list_defined_containers(const char *lxcpath, char ***names/*出参，列出目录下所有文件*/, struct lxc_container ***cret)
 {
 	__do_closedir DIR *dir = NULL;
 	int i, cfound = 0, nfound = 0;
@@ -5507,8 +5515,10 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 	struct lxc_container *c;
 
 	if (!lxcpath)
+		/*未提供lxcpath,取全局配置*/
 		lxcpath = lxc_global_config_value("lxc.lxcpath");
 
+	/*目录必须存在*/
 	dir = opendir(lxcpath);
 	if (!dir) {
 		SYSERROR("opendir on lxcpath");
@@ -5521,25 +5531,30 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 	if (names)
 		*names = NULL;
 
+	/*遍历目录下所有成员文件*/
 	while ((direntp = readdir(dir))) {
 		/* Ignore '.', '..' and any hidden directory. */
 		if (!strncmp(direntp->d_name, ".", 1))
+			/*跳过'.','..'文件*/
 			continue;
 
+		/*配置文件是否存在*/
 		if (!config_file_exists(lxcpath, direntp->d_name))
 			continue;
 
+		/*将$d_name加入到names*/
 		if (names)
 			if (!add_to_array(names, direntp->d_name, cfound))
 				goto free_bad;
 
-		cfound++;
+		cfound++;/*发现的文件名*/
 
 		if (!cret) {
 			nfound++;
 			continue;
 		}
 
+		/*构造container对象*/
 		c = lxc_container_new(direntp->d_name, lxcpath);
 		if (!c) {
 			INFO("Container %s:%s has a config but could not be loaded",
@@ -5552,6 +5567,7 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 			continue;
 		}
 
+		/*检查c是否定义了*/
 		if (!do_lxcapi_is_defined(c)) {
 			INFO("Container %s:%s has a config but is not defined",
 				lxcpath, direntp->d_name);
@@ -5564,6 +5580,7 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 			continue;
 		}
 
+		/*将container加入到cret中*/
 		if (!add_to_clist(cret, c, nfound, true)) {
 			lxc_container_put(c);
 			goto free_bad;
@@ -5572,6 +5589,7 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 		nfound++;
 	}
 
+	/*返回发现的container数目*/
 	return nfound;
 
 free_bad:
@@ -5590,8 +5608,9 @@ free_bad:
 	return -1;
 }
 
-int list_active_containers(const char *lxcpath, char ***nret,
-			   struct lxc_container ***cret)
+//列出活跃的container
+int list_active_containers(const char *lxcpath, char ***nret/*出参，容器名称数组*/,
+			   struct lxc_container ***cret/*出参，容器对象数组*/)
 {
 	__do_free char *line = NULL;
 	__do_fclose FILE *f = NULL;
@@ -5602,6 +5621,7 @@ int list_active_containers(const char *lxcpath, char ***nret,
 	struct lxc_container *c = NULL;
 	bool is_hashed;
 
+	/*获取lxcpath*/
 	if (!lxcpath)
 		lxcpath = lxc_global_config_value("lxc.lxcpath");
 	lxcpath_len = strlen(lxcpath);
@@ -5612,16 +5632,20 @@ int list_active_containers(const char *lxcpath, char ***nret,
 	if (nret)
 		*nret = NULL;
 
+	/*遍历/proc/net/unix文件中每一行*/
 	f = fopen("/proc/net/unix", "re");
 	if (!f)
 		return -1;
 
+	//取一行unix
 	while (getline(&line, &len, f) != -1) {
+		//取unix文件路径，含' '
 		char *p = strrchr(line, ' '), *p2;
 		if (!p)
 			continue;
 		p++;
 
+		//首字符必须为0x40
 		if (*p != 0x40)
 			continue;
 		p++;
@@ -5629,14 +5653,17 @@ int list_active_containers(const char *lxcpath, char ***nret,
 		is_hashed = false;
 
 		if (strncmp(p, lxcpath, lxcpath_len) == 0) {
+			//p以$lxcpath开头，则跳过lxcpath
 			p += lxcpath_len;
 		} else if (strncmp(p, "lxc/", 4) == 0) {
+			//p以'lxc/'开头，则跳过
 			p += 4;
 			is_hashed = true;
 		} else {
 			continue;
 		}
 
+		//跳过'/'
 		while (*p == '/')
 			p++;
 
@@ -5662,12 +5689,14 @@ int list_active_containers(const char *lxcpath, char ***nret,
 				continue;
 		}
 
+		/*检查p是否在ct_name中是否存在,如已存在，则continue*/
 		if (array_contains(&ct_name, p, ct_name_cnt)) {
 			if (is_hashed)
 				free(p);
 			continue;
 		}
 
+		/*ct_name中不存在p,这里将其加入*/
 		if (!add_to_array(&ct_name, p, ct_name_cnt)) {
 			if (is_hashed)
 				free(p);
@@ -5682,6 +5711,7 @@ int list_active_containers(const char *lxcpath, char ***nret,
 			continue;
 		}
 
+		/*构造container*/
 		c = lxc_container_new(p, lxcpath);
 		if (!c) {
 			INFO("Container %s:%s is running but could not be loaded",
@@ -5703,6 +5733,7 @@ int list_active_containers(const char *lxcpath, char ***nret,
 		 * fact that the command socket exists.
 		 */
 
+		/*将c加入到cret中*/
 		if (!add_to_clist(cret, c, cret_cnt, true)) {
 			lxc_container_put(c);
 			goto free_cret_list;
@@ -5743,24 +5774,29 @@ out:
 	return ret;
 }
 
-int list_all_containers(const char *lxcpath, char ***nret,
-			struct lxc_container ***cret)
+//列出所有container
+int list_all_containers(const char *lxcpath, char ***nret/*出参，所有容器名称数组*/,
+			struct lxc_container ***cret/*出参，所有容器对象数组*/)
 {
 	int i, ret, active_cnt, ct_cnt, ct_list_cnt;
 	char **active_name;
+	/*列出发现的continer名称*/
 	char **ct_name;
 	struct lxc_container **ct_list = NULL;
 
+	/*列出发现的所有container*/
 	ct_cnt = list_defined_containers(lxcpath, &ct_name, NULL);
 	if (ct_cnt < 0)
 		return ct_cnt;
 
+	/*列出所有的所有活跃container*/
 	active_cnt = list_active_containers(lxcpath, &active_name, NULL);
 	if (active_cnt < 0) {
 		ret = active_cnt;
 		goto free_ct_name;
 	}
 
+	/*在ct_name中添加活跃的容器名称*/
 	for (i = 0; i < active_cnt; i++) {
 		if (!array_contains(&ct_name, active_name[i], ct_cnt)) {
 			if (!add_to_array(&ct_name, active_name[i], ct_cnt)) {
@@ -5779,6 +5815,7 @@ int list_all_containers(const char *lxcpath, char ***nret,
 	active_name = NULL;
 	active_cnt = 0;
 
+	//构造ct_name对应的container对象，并将其加入到ct_list中
 	for (i = 0, ct_list_cnt = 0; i < ct_cnt && cret; i++) {
 		struct lxc_container *c;
 
