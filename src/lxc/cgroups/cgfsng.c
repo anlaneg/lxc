@@ -2216,14 +2216,22 @@ static int cgroup_attach_leaf(const struct lxc_conf *conf, int unified_fd, pid_t
 
 	do {
 		bool rm = false;
-		char attach_cgroup[STRLITERALLEN(".lxc-1000/cgroup.procs") + 1];
-		char *slash;
+		char attach_cgroup[STRLITERALLEN(".lxc-/cgroup.procs") + INTTYPE_TO_STRLEN(int) + 1];
+		char *slash = attach_cgroup;
 
 		ret = snprintf(attach_cgroup, sizeof(attach_cgroup), ".lxc-%d/cgroup.procs", idx);
 		if (ret < 0 || (size_t)ret >= sizeof(attach_cgroup))
 			return ret_errno(EIO);
 
-		slash = &attach_cgroup[ret] - STRLITERALLEN("/cgroup.procs");
+		/*
+		 * This shouldn't really happen but the compiler might complain
+		 * that a short write would cause a buffer overrun. So be on
+		 * the safe side.
+		 */
+		if (ret < STRLITERALLEN(".lxc-/cgroup.procs"))
+			return log_error_errno(-EINVAL, EINVAL, "Unexpected short write would cause buffer-overrun");
+
+		slash += (ret - STRLITERALLEN("/cgroup.procs"));
 		*slash = '\0';
 
 		ret = mkdirat(unified_fd, attach_cgroup, 0755);
