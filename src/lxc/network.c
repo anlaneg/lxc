@@ -591,7 +591,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		if (lxc_safe_uint(netdev->mtu, &mtu))
 			return log_error_errno(-1, errno, "Failed to parse mtu");
 	} else if (!is_empty_string(netdev->link)) {
-	        //如果mtu未配置，有桥接口，则使用桥接口mtu,否则使用netdev自身mtu
+	    //如果mtu未配置，有桥接口，则使用桥接口mtu,否则使用netdev自身mtu
 		int ifindex_mtu;
 
 		ifindex_mtu = if_nametoindex(netdev->link);

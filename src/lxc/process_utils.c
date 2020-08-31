@@ -159,6 +159,7 @@ pid_t lxc_clone(int (*fn)(void *), void *arg, int flags, int *pidfd)
 #ifdef __ia64__
 	ret = __clone2(fn, stack, __LXC_STACK_SIZE, flags | SIGCHLD, arg, pidfd);
 #else
+	//调用clone系统调用
 	ret = clone(fn, stack + __LXC_STACK_SIZE, flags | SIGCHLD, arg, pidfd);
 #endif
 	if (ret < 0)

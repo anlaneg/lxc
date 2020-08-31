@@ -891,8 +891,10 @@ static int lxc_container_name_to_pid(const char *lxcname_or_pid,
 	signed long int pid;
 	char *err = NULL;
 
+	/*尝试转换为pid*/
 	pid = strtol(lxcname_or_pid, &err, 10);
 	if (*err != '\0' || pid < 1) {
+	    //lxcname_or_pid确定为lxc name
 		struct lxc_container *c;
 
 		c = lxc_container_new(lxcname_or_pid, lxcpath);
@@ -919,6 +921,7 @@ static int lxc_container_name_to_pid(const char *lxcname_or_pid,
 		lxc_container_put(c);
 	}
 
+	/*发送0号信号，用于检查信号是否可被触发*/
 	ret = kill(pid, 0);
 	if (ret < 0) {
 		SYSERROR("Failed to send signal to pid %d", (int)pid);
@@ -929,11 +932,12 @@ static int lxc_container_name_to_pid(const char *lxcname_or_pid,
 }
 
 int lxc_inherit_namespace(const char *nsfd_path, const char *lxcpath,
-			  const char *namespace)
+			  const char *namespace/*ns名称*/)
 {
 	int fd, pid;
 	char *dup, *lastslash;
 
+	/*以'/'开头，则直接打开*/
 	if (nsfd_path[0] == '/') {
 		return open(nsfd_path, O_RDONLY | O_CLOEXEC);
 	}
@@ -944,6 +948,7 @@ int lxc_inherit_namespace(const char *nsfd_path, const char *lxcpath,
 		if (!dup)
 			return -1;
 
+		/*将最后一个'/'置为'\0'*/
 		dup[lastslash - nsfd_path] = '\0';
 		pid = lxc_container_name_to_pid(lastslash + 1, dup);
 		free(dup);

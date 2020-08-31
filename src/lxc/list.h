@@ -7,7 +7,7 @@
 
 //双链表
 struct lxc_list {
-	void *elem;
+	void *elem;/*元素*/
 	struct lxc_list *next;
 	struct lxc_list *prev;
 };

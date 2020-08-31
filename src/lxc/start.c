@@ -1056,6 +1056,7 @@ static int do_start(void *data)
 	uid_t nsuid = 0;
 	gid_t nsgid = 0;
 
+	//关注子进程不使用的sync socket
 	lxc_sync_fini_parent(handler);
 
 	if (lxc_abstract_unix_recv_fds(data_sock1, &status_fd, 1, NULL, 0) < 0) {
@@ -1090,6 +1091,7 @@ static int do_start(void *data)
 	/* Don't leak the pinfd to the container. */
 	close_prot_errno_disarm(handler->pinfd);
 
+	//等待父进程通知进行startup
 	ret = lxc_sync_wait_parent(handler, LXC_SYNC_STARTUP);
 	if (ret < 0)
 		goto out_warn_father;
@@ -1098,6 +1100,7 @@ static int do_start(void *data)
 	 * https://github.com/lxc/lxd/issues/1978.
 	 */
 	if (handler->ns_unshare_flags & CLONE_NEWNET) {
+	    //创建新的net namespace
 		ret = unshare(CLONE_NEWNET);
 		if (ret < 0) {
 			SYSERROR("Failed to unshare CLONE_NEWNET");
@@ -1109,6 +1112,7 @@ static int do_start(void *data)
 	/* Tell the parent task it can begin to configure the container and wait
 	 * for it to finish.
 	 */
+	//知会父进程进行configure,并等待父进程通知configure+1
 	ret = lxc_sync_barrier_parent(handler, LXC_SYNC_CONFIGURE);
 	if (ret < 0)
 		goto out_error;
@@ -1189,6 +1193,7 @@ static int do_start(void *data)
 	}
 
 	/* Ask father to setup cgroups and wait for him to finish. */
+	//知会父进程进行cgroups setup,并等待父进程通知cgroup+1
 	ret = lxc_sync_barrier_parent(handler, LXC_SYNC_CGROUP);
 	if (ret < 0)
 		goto out_error;
@@ -1376,6 +1381,7 @@ static int do_start(void *data)
 		}
 	}
 
+	//知会父进程进行cgroup limits,并等待父进程通知cgroup_limits+1
 	ret = lxc_sync_barrier_parent(handler, LXC_SYNC_CGROUP_LIMITS);
 	if (ret < 0)
 		goto out_warn_father;
@@ -1645,10 +1651,11 @@ static int lxc_spawn(struct lxc_handler *handler)
 	wants_to_map_ids = !lxc_list_empty(id_map);
 
 	for (i = 0; i < LXC_NS_MAX; i++) {
-	    //跳过不需要share的，如果要share，则继承已有的namespace
+	    //跳过unshare的，如果要share，则继承已有的namespace
 		if (!conf->ns_share[i])
 			continue;
 
+		//打开此namespace对应的fd
 		handler->nsfd[i] = lxc_inherit_namespace(conf->ns_share[i], lxcpath, ns_info[i].proc_name);
 		if (handler->nsfd[i] < 0)
 			return -1;
@@ -1902,7 +1909,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	/* Tell the child to continue its initialization. We'll get
 	 * LXC_SYNC_CGROUP when it is ready for us to setup cgroups.
 	 */
-	//知会子进程开始处理 post_configure阶段，并等待开始下一步
+	//知会子进程开始处理post_configure阶段，并等待开始post_configure+1
 	ret = lxc_sync_barrier_child(handler, LXC_SYNC_POST_CONFIGURE);
 	if (ret < 0)
 		goto out_delete_net;

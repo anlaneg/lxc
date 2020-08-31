@@ -25,6 +25,7 @@ static int my_parser(struct lxc_arguments *args, int c, char *arg);
 static void create_helpfn(const struct lxc_arguments *args);
 static bool validate_bdev_args(struct lxc_arguments *args);
 
+//lxc-create的长选项
 static const struct option my_longopts[] = {
 	{"bdev", required_argument, 0, 'B'},
 	{"config", required_argument, 0, 'f'},
@@ -105,7 +106,7 @@ static int my_parser(struct lxc_arguments *args, int c, char *arg)
 		args->configfile = arg;
 		break;
 	case 't':
-	    //模块路径或名称
+	    //容器模板路径或名称
 		args->template = arg;
 		break;
 	case '0':
@@ -205,7 +206,7 @@ static bool validate_bdev_args(struct lxc_arguments *args)
 	return true;
 }
 
-//负责创建container
+//此命令负责创建container
 int main(int argc, char *argv[])
 {
 	struct lxc_container *c;
@@ -228,7 +229,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 
 	if (!my_args.template) {
-	    /*必须指定模块名称*/
+	    /*必须指定容器模板名称*/
 		ERROR("A template must be specified");
 		ERROR("Use \"none\" if you really want a container without a rootfs");
 		exit(EXIT_FAILURE);

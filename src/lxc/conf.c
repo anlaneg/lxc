@@ -2349,6 +2349,7 @@ static int setup_mount_entries(const struct lxc_conf *conf,
 	return mount_file_entries(conf, rootfs, f, lxc_name, lxc_path);
 }
 
+//将字符串形式的cap转换为capid
 static int parse_cap(const char *cap)
 {
 	size_t i;
@@ -2359,6 +2360,7 @@ static int parse_cap(const char *cap)
 	if (strcmp(cap, "none") == 0)
 		return -2;
 
+	//遍历caps字符串，查找其对应的cap_id
 	for (i = 0; i < end; i++) {
 		if (strcmp(cap, caps_opt[i].name))
 			continue;
@@ -2368,6 +2370,7 @@ static int parse_cap(const char *cap)
 	}
 
 	if (capid < 0) {
+	    //检查cap字符串是否为数字型式的capid
 		/* Try to see if it's numeric, so the user may specify
 		 * capabilities that the running kernel knows about but we
 		 * don't
@@ -2406,11 +2409,13 @@ static int setup_caps(struct lxc_list *caps)
 	char *drop_entry;
 	struct lxc_list *iterator;
 
+	//遍历caps链表，每个elem为一个cap字符串
 	lxc_list_for_each (iterator, caps) {
 		int ret;
 
 		drop_entry = iterator->elem;
 
+		//解析此cap名称
 		capid = parse_cap(drop_entry);
 		if (capid < 0)
 			return log_error(-1, "unknown capability %s", drop_entry);
@@ -3445,6 +3450,7 @@ int lxc_setup(struct lxc_handler *handler)
 		if (dropcaps_except(&lxc_conf->keepcaps))
 			return log_error(-1, "Failed to keep capabilities");
 	} else if (setup_caps(&lxc_conf->caps)) {
+	    /*处理drop capbility失败*/
 		return log_error(-1, "Failed to drop capabilities");
 	}
 

@@ -198,7 +198,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 	bool logfile = false;
 	char shortopts[256];
 
-	//构造短选项
+	//利用长选项，构造短选项
 	ret = build_shortopts(args->options, shortopts, sizeof(shortopts));
 	if (ret < 0) {
 		lxc_error(args, "build_shortopts() failed : %s",
@@ -217,6 +217,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 
 		switch (c) {
 		case 'n':
+		    /*用户配置的容器名称*/
 			args->name = optarg;
 			break;
 		case 'o':
@@ -254,6 +255,7 @@ extern int lxc_arguments_parse(struct lxc_arguments *args, int argc,
 		case 'h':
 			print_help_exit(args, 0);
 		default:
+		    /*其它参数解析*/
 			if (args->parser) {
 				ret = args->parser(args, c, optarg);
 				if (ret)

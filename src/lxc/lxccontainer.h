@@ -114,6 +114,7 @@ struct lxc_container {
 	 *
 	 * \return \c true if container is defined, else \c false.
 	 */
+	//通过检查容器config文件是否存在，确定容器是否已定义
 	bool (*is_defined)(struct lxc_container *c);
 
 	/*!

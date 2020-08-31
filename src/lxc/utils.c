@@ -863,7 +863,7 @@ char *get_template_path(const char *t)
 	int ret, len;
 	char *tpath;
 
-	//如果模板地址为绝对地址，则返回绝对地址
+	//如果模板地址为绝对地址，则直接返回
 	if (t[0] == '/') {
 		if (access(t, X_OK) == 0) {
 			return strdup(t);
@@ -874,7 +874,7 @@ char *get_template_path(const char *t)
 		}
 	}
 
-	//给定的为相对地址，构造成绝对地址
+	//给定的为模板名称，构造成绝对地址
 	len = strlen(LXCTEMPLATEDIR) + strlen(t) + strlen("/lxc-") + 1;
 
 	tpath = malloc(len);

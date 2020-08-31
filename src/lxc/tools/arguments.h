@@ -24,7 +24,8 @@ struct lxc_arguments {
 	void (*helpfn)(const struct lxc_arguments *);
 	const char *progname;//程序名
 	const struct option *options;//参数选项情况
-	lxc_arguments_parser_t parser;//定制的其它选项解析
+	//定制的其它选项解析
+	lxc_arguments_parser_t parser;
 	lxc_arguments_checker_t checker;//定制的参数检查
 
 	const char *name;//容器名称
@@ -70,7 +71,7 @@ struct lxc_arguments {
 	bool close_all_fds;
 
 	/* lxc-create */
-	char *bdevtype/*块设备类型*/, *configfile/*配置文件路径*/, *template/*模板名称或路径*/;
+	char *bdevtype/*容器块设备类型*/, *configfile/*配置文件路径*/, *template/*容器模板名称或路径*/;
 	char *fstype;
 	uint64_t fssize;
 	char *lvname, *vgname, *thinpool;

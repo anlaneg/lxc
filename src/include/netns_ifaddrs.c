@@ -469,6 +469,7 @@ static int __rtnl_enumerate(int link_af, int addr_af, __s32 netns_id,
 	int fd, r, saved_errno;
 	bool getaddr_netnsid_aware = false, getlink_netnsid_aware = false;
 
+	//创建netlink socket
 	fd = socket(PF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
 	if (fd < 0)
 		return -1;

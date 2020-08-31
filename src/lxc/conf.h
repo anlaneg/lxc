@@ -403,7 +403,8 @@ struct lxc_conf {
 	struct {
 		int ns_clone;
 		int ns_keep;
-		char *ns_share[LXC_NS_MAX];//指明哪些namespace需要share
+		//指明哪些namespace需要share
+		char *ns_share[LXC_NS_MAX];
 	};
 
 	/* init working directory */

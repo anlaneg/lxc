@@ -39,6 +39,7 @@ static char *copy_global_config_value(char *p)
 	return retbuf;
 }
 
+/*全局配置项，及其默认值*/
 const char *lxc_global_config_value(const char *option_name)
 {
 	static const char * const options[][2] = {

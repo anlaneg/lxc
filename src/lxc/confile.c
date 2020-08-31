@@ -292,10 +292,11 @@ struct lxc_config_t *lxc_get_config(const char *key)
 	return NULL;
 }
 
+//配置lxc网络
 static int set_config_net(const char *key, const char *value,
 			  struct lxc_conf *lxc_conf, void *data)
 {
-    //net配置value不能为空
+    //net配置value必须为空
 	if (!lxc_config_value_empty(value)) {
 		ERROR("lxc.net must not have a value");
 		return -1;
@@ -415,6 +416,7 @@ static int set_config_net_link(const char *key, const char *value,
 	struct lxc_netdev *netdev = data;
 	int ret = 0;
 
+	//配置为空，清除link配置
 	if (lxc_config_value_empty(value))
 		return clr_config_net_link(key, lxc_conf, data);
 
@@ -424,6 +426,7 @@ static int set_config_net_link(const char *key, const char *value,
 	if (value[strlen(value) - 1] == '+' && netdev->type == LXC_NET_PHYS)
 		ret = create_matched_ifnames(value, lxc_conf, netdev);
 	else
+	    //非物理口，设置link名称
 		ret = network_ifname(netdev->link, value, sizeof(netdev->link));
 
 	return ret;
@@ -2369,6 +2372,7 @@ on_error:
 	return ret;
 }
 
+//设置lxc.cap.drop配置
 static int set_config_cap_drop(const char *key, const char *value,
 			       struct lxc_conf *lxc_conf, void *data)
 {
@@ -2376,6 +2380,7 @@ static int set_config_cap_drop(const char *key, const char *value,
 	struct lxc_list *droplist;
 	int ret = -1;
 
+	//配置为空，则将c->caps全清除掉
 	if (lxc_config_value_empty(value))
 		return lxc_clear_config_caps(lxc_conf);
 
@@ -2386,11 +2391,13 @@ static int set_config_cap_drop(const char *key, const char *value,
 	/* In case several capability drop is specified in a single line
 	 * split these caps in a single element for the list.
 	 */
+	//按分隔符进行token划分，构造droplist添加到lxc_conf->caps中
 	lxc_iterate_parts(token, dropcaps, " \t") {
 		droplist = malloc(sizeof(*droplist));
 		if (!droplist)
 			goto on_error;
 
+		//保存token为element
 		droplist->elem = strdup(token);
 		if (!droplist->elem) {
 			free(droplist);
@@ -5844,6 +5851,7 @@ static int get_config_net_link(const char *key, char *retv, int inlen,
 	if (!netdev)
 		return -1;
 
+	//返回网络设备名称
 	if (netdev->link[0] != '\0')
 		strprint(retv, inlen, "%s", netdev->link);
 

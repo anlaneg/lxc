@@ -2832,6 +2832,7 @@ __cgfsng_ops static bool cgfsng_setup_limits_legacy(struct cgroup_ops *ops,
 	bool ret = false;
 
 	if (!ops)
+	    /*ops不能为空*/
 		return ret_set_errno(false, ENOENT);
 
 	if (!conf)
@@ -2841,6 +2842,7 @@ __cgfsng_ops static bool cgfsng_setup_limits_legacy(struct cgroup_ops *ops,
 	if (lxc_list_empty(cgroup_settings))
 		return true;
 
+	/*hierarchies回调不得为空*/
 	if (!ops->hierarchies)
 		return ret_set_errno(false, EINVAL);
 

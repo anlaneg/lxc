@@ -83,17 +83,19 @@ int lxc_sync_barrier_parent(struct lxc_handler *handler, int sequence)
 	return __sync_barrier(handler->sync_sock[0], sequence);
 }
 
-//通知子进程开始开始sequence阶段，等待子进程达到sequence阶段后开始下一步操作
+//通知子进程开始执行sequence阶段，等待子进程达到sequence阶段后开始下一步(sequence+1)操作
 int lxc_sync_barrier_child(struct lxc_handler *handler, int sequence)
 {
 	return __sync_barrier(handler->sync_sock[1], sequence);
 }
 
+//通知父进程执行sequence阶段
 int lxc_sync_wake_parent(struct lxc_handler *handler, int sequence)
 {
 	return __sync_wake(handler->sync_sock[0], sequence);
 }
 
+//等待父进程通知执行sequence阶段
 int lxc_sync_wait_parent(struct lxc_handler *handler, int sequence)
 {
 	return __sync_wait(handler->sync_sock[0], sequence);
@@ -115,7 +117,7 @@ int lxc_sync_init(struct lxc_handler *handler)
 {
 	int ret;
 
-	//创建同步socket
+	//创建父子进程同步socket
 	ret = socketpair(AF_LOCAL, SOCK_STREAM, 0, handler->sync_sock);
 	if (ret) {
 		SYSERROR("failed to create synchronization socketpair");
@@ -128,6 +130,7 @@ int lxc_sync_init(struct lxc_handler *handler)
 	return 0;
 }
 
+//父进程不使用sync_sock[0],故关闭sync_sock[0]
 void lxc_sync_fini_child(struct lxc_handler *handler)
 {
 	if (handler->sync_sock[0] != -1) {

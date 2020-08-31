@@ -359,7 +359,7 @@ int lxc_container_put(struct lxc_container *c)
 	return 0;
 }
 
-//检查容器c是否已定义
+//检查容器c是否已定义（如果存在配置文件，则认为已定义）
 static bool do_lxcapi_is_defined(struct lxc_container *c)
 {
 	int statret;
@@ -388,7 +388,8 @@ on_error:
 	return ret;
 }
 
-#define WRAP_API(rettype, fnname)					\
+/*将current_config变更为c的配置，并调用do_$fnname(c)函数*/
+#define WRAP_API(rettype/*函数返回类型*/, fnname/*函数名称*/)					\
 static rettype fnname(struct lxc_container *c)				\
 {									\
 	rettype ret;							\
@@ -1241,6 +1242,7 @@ static bool do_lxcapi_stop(struct lxc_container *c)
 
 WRAP_API(bool, lxcapi_stop)
 
+/*创建容器对应的目录*/
 static int do_create_container_dir(const char *path, struct lxc_conf *conf)
 {
 	int lasterr;
@@ -1830,6 +1832,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 		return false;
 
 	if (t) {
+	    /*取模块对应路径*/
 		tpath = get_template_path(t);
 		if (!tpath) {
 			ERROR("Unknown template \"%s\"", t);
@@ -1849,6 +1852,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 	}
 
 	if (!c->lxc_conf) {
+	    //加载默认配置
 		if (!do_lxcapi_load_config(c, lxc_global_config_value("lxc.default_config"))) {
 			ERROR("Error loading default configuration file %s",
 			      lxc_global_config_value("lxc.default_config"));
@@ -1986,8 +1990,8 @@ free_tpath:
 	return ret;
 }
 
-//容器创建
-static bool lxcapi_create(struct lxc_container *c, const char *t,
+//完成容器创建
+static bool lxcapi_create(struct lxc_container *c, const char *t/*容器模板文件*/,
 			  const char *bdevtype, struct bdev_specs *specs,
 			  int flags, char *const argv[])
 {

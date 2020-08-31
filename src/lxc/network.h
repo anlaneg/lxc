@@ -162,7 +162,8 @@ struct lxc_netdev {
 	int ifindex;//设备ifindex
 	int type;//网络设备类型（LXC_NET_VETH,ipvlan,macvlan等）
 	int flags;
-	char link[IFNAMSIZ];//桥模式时，此值为桥名称
+	//网络设备名称
+	char link[IFNAMSIZ];
 	bool l2proxy;
 	char name[IFNAMSIZ];
 	char created_name[IFNAMSIZ];//生成的本端接口名称
