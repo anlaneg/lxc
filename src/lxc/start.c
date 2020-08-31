@@ -212,8 +212,9 @@ static bool match_dlog_fds(struct dirent *direntp)
 }
 #endif
 
+/*处理继承的fd,检查是否需要关闭*/
 int lxc_check_inherited(struct lxc_conf *conf, bool closeall,
-			int *fds_to_ignore, size_t len_fds)
+			int *fds_to_ignore/*需要忽略的fd*/, size_t len_fds/*需要忽略的fd数目*/)
 {
 	int fd, fddir;
 	size_t i;
@@ -237,31 +238,37 @@ restart:
 
 	fddir = dirfd(dir);
 
+	//遍历此进程所有已打开的fd
 	while ((direntp = readdir(dir))) {
 		int ret;
 		struct lxc_list *cur;
 		bool matched = false;
 
+		//跳过父，子目录
 		if (strcmp(direntp->d_name, ".") == 0)
 			continue;
 
 		if (strcmp(direntp->d_name, "..") == 0)
 			continue;
 
+		//取fd编号
 		ret = lxc_safe_int(direntp->d_name, &fd);
 		if (ret < 0) {
 			INFO("Could not parse file descriptor for \"%s\"", direntp->d_name);
 			continue;
 		}
 
+		/*查找fd在fds_to_ignore的索引*/
 		for (i = 0; i < len_fds; i++)
 			if (fds_to_ignore[i] == fd)
 				break;
 
+		/*跳过1。当前正在打开的/proc/self/fd目录对应fd;2.lxc_log对应的fd;3.此fd需要被忽略*/
 		if (fd == fddir || fd == lxc_log_fd ||
 		    (i < len_fds && fd == fds_to_ignore[i]))
 			continue;
 
+		/*跳过client对应的fd*/
 		/* Keep state clients that wait on reboots. */
 		if (conf) {
 			lxc_list_for_each(cur, &conf->state_clients) {
@@ -278,9 +285,11 @@ restart:
 		if (matched)
 			continue;
 
+		//跳过logfd
 		if (current_config && fd == current_config->logfd)
 			continue;
 
+		//跳过标认输出输出等fd
 		if (match_stdfds(fd))
 			continue;
 
@@ -290,7 +299,7 @@ restart:
 
 #endif
 		if (closeall) {
-		    	//配置了关闭所有fd,故这里将fd关闭
+		    //配置了关闭所有fd,故这里将此fd关闭
 			if (close(fd))
 				SYSINFO("Closed inherited fd %d", fd);
 			else
@@ -713,6 +722,7 @@ struct lxc_handler *lxc_init_handler(struct lxc_handler *old,
 	}
 
 	if (handler->conf->reboot == REBOOT_NONE) {
+	    /*初始化command server*/
 		handler->conf->maincmd_fd = lxc_cmd_init(name, lxcpath, "command");
 		if (handler->conf->maincmd_fd < 0) {
 			ERROR("Failed to set up command socket");

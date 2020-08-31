@@ -150,6 +150,7 @@ ssize_t lxc_pwrite_nointr(int fd, const void *buf, size_t count, off_t offset)
 	return ret;
 }
 
+//发送buf消息
 ssize_t lxc_send_nointr(int sockfd, void *buf, size_t len, int flags)
 {
 	ssize_t ret;

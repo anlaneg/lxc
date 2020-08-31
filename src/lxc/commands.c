@@ -62,6 +62,7 @@
 
 lxc_log_define(commands, lxc);
 
+/*返回各cmd对应的字符形式*/
 static const char *lxc_cmd_str(lxc_cmd_t cmd)
 {
 	static const char *const cmdname[LXC_CMD_MAX] = {
@@ -211,6 +212,7 @@ static int lxc_cmd_rsp_send(int fd, struct lxc_cmd_rsp *rsp)
 {
 	ssize_t ret;
 
+	//发送rsp头部
 	errno = EMSGSIZE;
 	ret = lxc_send_nointr(fd, rsp, sizeof(*rsp), MSG_NOSIGNAL);
 	if (ret < 0 || (size_t)ret != sizeof(*rsp))
@@ -219,6 +221,7 @@ static int lxc_cmd_rsp_send(int fd, struct lxc_cmd_rsp *rsp)
 	if (!rsp->data || rsp->datalen <= 0)
 		return 0;
 
+	//发送rsp->data
 	errno = EMSGSIZE;
 	ret = lxc_send_nointr(fd, rsp->data, rsp->datalen, MSG_NOSIGNAL);
 	if (ret < 0 || ret != (ssize_t)rsp->datalen)
@@ -227,18 +230,18 @@ static int lxc_cmd_rsp_send(int fd, struct lxc_cmd_rsp *rsp)
 	return 0;
 }
 
-static int lxc_cmd_send(const char *name, struct lxc_cmd_rr *cmd,
+static int lxc_cmd_send(const char *name/*容器名称*/, struct lxc_cmd_rr *cmd/*容器命令*/,
 			const char *lxcpath, const char *hashed_sock_name)
 {
 	__do_close int client_fd = -EBADF;
 	ssize_t ret = -1;
 
-	//生成到name容器的command client
+	//生成到容器的command client
 	client_fd = lxc_cmd_connect(name, lxcpath, hashed_sock_name, "command");
 	if (client_fd < 0)
 		return -1;
 
-	/*发送command请求的资格获取*/
+	/*发送command请求*/
 	ret = lxc_abstract_unix_send_credential(client_fd, &cmd->req,
 						sizeof(cmd->req));
 	if (ret < 0 || (size_t)ret != sizeof(cmd->req))
@@ -251,11 +254,12 @@ static int lxc_cmd_send(const char *name, struct lxc_cmd_rr *cmd,
 			return -1;
 	} else {
 
-	    //向server发送command请求
+	    /*无请求数据，返回*/
 		if (cmd->req.datalen <= 0)
 			return move_fd(client_fd);
 
 		errno = EMSGSIZE;
+		/*发送请求数据*/
 		ret = lxc_send_nointr(client_fd, (void *)cmd->req.data,
 				      cmd->req.datalen, MSG_NOSIGNAL);
 		if (ret < 0 || ret != (ssize_t)cmd->req.datalen)
@@ -838,6 +842,7 @@ static int lxc_cmd_get_state_callback(int fd, struct lxc_cmd_req *req,
 		.data = INT_TO_PTR(handler->state),
 	};
 
+	//发送状态请求响应
 	ret = lxc_cmd_rsp_send(fd, &rsp);
 	if (ret < 0)
 		return LXC_CMD_REAP_CLIENT_FD;
@@ -896,6 +901,7 @@ static int lxc_cmd_stop_callback(int fd, struct lxc_cmd_req *req,
 	if (handler->pidfd >= 0)
 		rsp.ret = lxc_raw_pidfd_send_signal(handler->pidfd, stopsignal, NULL, 0);
 	else
+	    /*向container发送信号*/
 		rsp.ret = kill(handler->pid, stopsignal);
 	if (!rsp.ret) {
 		if (handler->pidfd >= 0)
@@ -913,6 +919,7 @@ static int lxc_cmd_stop_callback(int fd, struct lxc_cmd_req *req,
 		rsp.ret = -errno;
 	}
 
+	/*响应请求方消息*/
 	ret = lxc_cmd_rsp_send(fd, &rsp);
 	if (ret < 0)
 		return LXC_CMD_REAP_CLIENT_FD;
@@ -1590,6 +1597,7 @@ static int lxc_cmd_process(int fd, struct lxc_cmd_req *req,
 		[LXC_CMD_CONSOLE]			= lxc_cmd_console_callback,
 		[LXC_CMD_TERMINAL_WINCH]              	= lxc_cmd_terminal_winch_callback,
 		[LXC_CMD_STOP]                        	= lxc_cmd_stop_callback,
+		/*获得容器状态*/
 		[LXC_CMD_GET_STATE]                   	= lxc_cmd_get_state_callback,
 		[LXC_CMD_GET_INIT_PID]                	= lxc_cmd_get_init_pid_callback,
 		[LXC_CMD_GET_CLONE_FLAGS]             	= lxc_cmd_get_clone_flags_callback,
@@ -1615,6 +1623,7 @@ static int lxc_cmd_process(int fd, struct lxc_cmd_req *req,
 	if (req->cmd >= LXC_CMD_MAX)
 		return log_trace_errno(-1, EINVAL, "Invalid command id %d", req->cmd);
 
+	//按cmd处理此命令请求
 	return cb[req->cmd](fd, req, handler, descr);
 }
 
@@ -1690,6 +1699,7 @@ static int lxc_cmd_handler(int fd, uint32_t events, void *data,
 	if (ret == 0)
 		goto out_close;
 
+	//消息结构检查
 	if (ret != sizeof(req)) {
 		WARN("Failed to receive full command request. Ignoring request for \"%s\"", lxc_cmd_str(req.cmd));
 		goto out_close;
@@ -1711,6 +1721,7 @@ static int lxc_cmd_handler(int fd, uint32_t events, void *data,
 		req.data = reqdata;
 	}
 
+	/*按req处理命令*/
 	ret = lxc_cmd_process(fd, &req, handler, descr);
 	if (ret) {
 		/* This is not an error, but only a request to close fd. */
@@ -1731,6 +1742,7 @@ static int lxc_cmd_accept(int fd, uint32_t events, void *data,
 	__do_close int connection = -EBADF;
 	int opt = 1, ret = -1;
 
+	/*接入新连接*/
 	connection = accept(fd, NULL, 0);
 	if (connection < 0)
 		return log_error_errno(LXC_MAINLOOP_ERROR, errno, "Failed to accept connection to run command");
@@ -1743,6 +1755,7 @@ static int lxc_cmd_accept(int fd, uint32_t events, void *data,
 	if (ret < 0)
 		return log_error_errno(ret, errno, "Failed to enable necessary credentials on command socket");
 
+	/*注册connection fd对应的命令处理逻辑*/
 	ret = lxc_mainloop_add_handler(descr, connection, lxc_cmd_handler, data);
 	if (ret)
 		return log_error(ret, "Failed to add command handler");
@@ -1753,7 +1766,7 @@ static int lxc_cmd_accept(int fd, uint32_t events, void *data,
 }
 
 //构造cmd socket
-int lxc_cmd_init(const char *name, const char *lxcpath, const char *suffix)
+int lxc_cmd_init(const char *name, const char *lxcpath, const char *suffix/*command前缀*/)
 {
 	__do_close int fd = -EBADF;
 	int ret;
@@ -1781,11 +1794,13 @@ int lxc_cmd_init(const char *name, const char *lxcpath, const char *suffix)
 	return log_trace(move_fd(fd), "Created abstract unix socket \"%s\"", &path[1]);
 }
 
+/*将cmd fd加入到mainloop中*/
 int lxc_cmd_mainloop_add(const char *name, struct lxc_epoll_descr *descr,
 			 struct lxc_handler *handler)
 {
 	int ret;
 
+	/*将maincmd_fd加入到mainloop,处理命令请求响应*/
 	ret = lxc_mainloop_add_handler(descr, handler->conf->maincmd_fd, lxc_cmd_accept, handler);
 	if (ret < 0)
 		return log_error(ret, "Failed to add handler for command socket fd %d", handler->conf->maincmd_fd);

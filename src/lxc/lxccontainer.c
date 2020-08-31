@@ -136,13 +136,14 @@ static int ongoing_create(struct lxc_container *c)
 	int ret;
 	size_t len;
 
-	//构造partial文件名称
+	//构造partial文件路径名称
 	len = strlen(c->config_path) + 1 + strlen(c->name) + 1 + strlen(LXC_PARTIAL_FNAME) + 1;
 	path = must_realloc(NULL, len);
 	ret = snprintf(path, len, "%s/%s/%s", c->config_path, c->name, LXC_PARTIAL_FNAME);
 	if (ret < 0 || (size_t)ret >= len)
 		return LXC_CREATE_FAILED;
 
+	//打开partial文件，例如/usr/local/var/lib/lxc/$c_name/partial
 	fd = open(path, O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
 		if (errno != ENOENT)
@@ -395,11 +396,13 @@ static rettype fnname(struct lxc_container *c)				\
 	rettype ret;							\
 	bool reset_config = false;					\
 									\
+	/*如果current_config未设置，则设置*/\
 	if (!current_config && c && c->lxc_conf) {			\
 		current_config = c->lxc_conf;				\
 		reset_config = true;					\
 	}								\
 									\
+	/*调用do_$fnname函数完成功作*/\
 	ret = do_##fnname(c);						\
 	if (reset_config)						\
 		current_config = NULL;					\
@@ -1010,7 +1013,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		 */
 		ret = snprintf(title, sizeof(title), "[lxc monitor] %s %s", c->config_path, c->name);
 		if (ret > 0) {
-		    //设置进程名称
+		    //设置子进程名称（lxc monitor)
 			ret = setproctitle(title);
 			if (ret < 0)
 				INFO("Failed to set process title to %s", title);
@@ -1031,7 +1034,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 
 		/* second parent */
 		if (pid_second != 0) {
-		    //send parent直接退出
+		    //second parent直接退出
 			free_init_cmd(init_cmd);
 			lxc_put_handler(handler);
 			_exit(EXIT_SUCCESS);
@@ -1046,6 +1049,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 			_exit(EXIT_FAILURE);
 		}
 
+		/*是否关闭继承的fds*/
 		ret = inherit_fds(handler, true);
 		if (ret < 0)
 			_exit(EXIT_FAILURE);
@@ -1090,7 +1094,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 		}
 
 		//写入pid文件
-		ret = lxc_write_to_file(c->pidfile, pidstr, w, false, 0600);
+		ret = lxc_write_to_file(c->pidfile, pidstr/*pid字符串形式*/, w, false, 0600);
 		if (ret < 0) {
 			free_init_cmd(init_cmd);
 			lxc_put_handler(handler);
@@ -1148,7 +1152,7 @@ reboot:
 		ret = lxc_execute(c->name, argv, 1, handler, c->config_path,
 				  c->daemonize, &c->error_num);
 	else
-	    	//启动容器
+	    /*启动容器*/
 		ret = lxc_start(argv/*命令行参数*/, handler, c->config_path, c->daemonize,
 				&c->error_num);
 
@@ -5422,7 +5426,7 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 		break;
 	}
 
-	/*构造container对象*/
+	/*构造container对象,填充相应回调*/
 	c->daemonize = true;
 	c->pidfile = NULL;
 

@@ -1315,6 +1315,7 @@ int set_stdfds(int fd)
 	return 0;
 }
 
+/*将stdin,stdout,stderr重定向到/dev/null*/
 int null_stdfds(void)
 {
 	int ret = -1;

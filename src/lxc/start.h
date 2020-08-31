@@ -116,6 +116,7 @@ struct lxc_handler {
 	void *data;
 
 	/* Current state of the container. */
+	//容器当前状态
 	lxc_state_t state;
 
 	/* The exit status of the container; not defined unless ->init_died ==
@@ -126,7 +127,7 @@ struct lxc_handler {
 	struct cgroup_ops *cgroup_ops;
 
 	/* Internal fds that always need to stay open. */
-	int keep_fds[3];
+	int keep_fds[3];//需要继承的fd,不能被子进程关闭
 
 	/* Static memory, don't free. */
 	struct lsm_ops *lsm_ops;
@@ -167,7 +168,8 @@ __hidden extern void lxc_end(struct lxc_handler *handler);
  */
 __hidden extern int lxc_check_inherited(struct lxc_conf *conf, bool closeall, int *fds_to_ignore,
 					size_t len_fds);
-static inline int inherit_fds(struct lxc_handler *handler, bool closeall)
+/*处理继承的fd*/
+static inline int inherit_fds(struct lxc_handler *handler, bool closeall/*是否需要关闭*/)
 {
 	return lxc_check_inherited(handler->conf, closeall, handler->keep_fds,
 				   ARRAY_SIZE(handler->keep_fds));

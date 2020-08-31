@@ -102,7 +102,7 @@ struct lxc_container {
 	int error_num;
 
 	/*! Whether container wishes to be daemonized */
-	bool daemonize;
+	bool daemonize;//container是否需要做daemon
 
 	/*! Full path to configuration file */
 	char *config_path;//配置文件路径

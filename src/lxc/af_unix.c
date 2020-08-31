@@ -28,7 +28,7 @@
 
 lxc_log_define(af_unix, lxc);
 
-//构造unix地址
+//设置unix地址
 static ssize_t lxc_abstract_unix_set_sockaddr(struct sockaddr_un *addr,
 					      const char *path)
 {
@@ -93,6 +93,7 @@ void lxc_abstract_unix_close(int fd)
 	close(fd);
 }
 
+/*连接到目的地址*/
 int lxc_abstract_unix_connect(const char *path)
 {
 	__do_close int fd = -EBADF;
@@ -100,6 +101,7 @@ int lxc_abstract_unix_connect(const char *path)
 	ssize_t len;
 	struct sockaddr_un addr;
 
+	//创建unix socket，并填充连接目的地址
 	fd = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd < 0)
 		return -1;
@@ -108,6 +110,7 @@ int lxc_abstract_unix_connect(const char *path)
 	if (len < 0)
 		return -1;
 
+	/*连接到目的地址*/
 	ret = connect(fd, (struct sockaddr *)&addr,
 		      offsetof(struct sockaddr_un, sun_path) + len + 1);
 	if (ret < 0)
@@ -228,6 +231,7 @@ int lxc_abstract_unix_recv_fds(int fd, int *recvfds, int num_recvfds,
 	return lxc_abstract_unix_recv_fds_iov(fd, recvfds, num_recvfds, &iov, 1);
 }
 
+/*向fd发送data消息*/
 int lxc_abstract_unix_send_credential(int fd, void *data, size_t size)
 {
 	struct msghdr msg = {0};
@@ -292,6 +296,7 @@ int lxc_abstract_unix_rcv_credential(int fd, void *data, size_t size)
 	    cmsg->cmsg_type == SCM_CREDENTIALS) {
 		memcpy(&cred, CMSG_DATA(cmsg), sizeof(cred));
 
+		/*校验uid,gid完成权限校验*/
 		if (cred.uid && (cred.uid != getuid() || cred.gid != getgid()))
 			return log_error_errno(-1, EACCES,
 					       "Message denied for '%d/%d'",

@@ -54,7 +54,7 @@ lxc_state_t lxc_str2state(const char *state)
 	return -1;
 }
 
-lxc_state_t lxc_getstate(const char *name, const char *lxcpath)
+lxc_state_t lxc_getstate(const char *name/*容器名称*/, const char *lxcpath/*容器配置路径*/)
 {
     //取name容器的状态
 	return lxc_cmd_get_state(name, lxcpath);

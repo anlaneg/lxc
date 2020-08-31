@@ -75,7 +75,7 @@ int lxc_cmd_sock_get_state(const char *name, const char *lxcpath,
 
 //构造unix socket name
 int lxc_make_abstract_socket_name(char *path, size_t pathlen,
-				  const char *lxcname,
+				  const char *lxcname/*容器名称*/,
 				  const char *lxcpath,
 				  const char *hashed_sock_name,
 				  const char *suffix)
@@ -104,6 +104,7 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 	if (!name)
 		name = "";
 
+	/*按hash方式创建socket*/
 	if (hashed_sock_name != NULL) {
 		ret = snprintf(offset, len, "lxc/%s/%s", hashed_sock_name, suffix);
 		if (ret < 0 || (size_t)ret >= len)
@@ -118,7 +119,7 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 			return log_error(-1, "Failed to allocate memory");
 	}
 
-	//填充路径
+	//自offset开始填充路径
 	ret = snprintf(offset, len, "%s/%s/%s", lxcpath, name, suffix);
 	if (ret < 0)
 		return log_error_errno(-1, errno, "Failed to create abstract socket name");
@@ -128,6 +129,7 @@ int lxc_make_abstract_socket_name(char *path, size_t pathlen,
 	 * hash both.
 	 */
 	if (ret >= len) {
+	    /*buffer过小，路径超过buffer*/
 		tmplen = strlen(name) + strlen(lxcpath) + 2;
 		tmppath = must_realloc(NULL, tmplen);
 		ret = snprintf(tmppath, tmplen, "%s/%s", lxcpath, name);
@@ -150,7 +152,7 @@ int lxc_cmd_connect(const char *name, const char *lxcpath,
 	int ret, client_fd;
 	char path[LXC_AUDS_ADDR_LEN] = {0};
 
-	//构造地址
+	//构造unix地址
 	ret = lxc_make_abstract_socket_name(path, sizeof(path), name, lxcpath,
 					    hashed_sock_name, suffix);
 	if (ret < 0)
