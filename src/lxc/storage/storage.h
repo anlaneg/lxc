@@ -53,9 +53,12 @@ struct lxc_storage_ops {
 	bool (*detect)(const char *path);
 
 	/* mount requires src and dest to be set. */
+	//完成bdev设备挂载
 	int (*mount)(struct lxc_storage *bdev);
+	//完成bdev设备解除
 	int (*umount)(struct lxc_storage *bdev);
 	int (*destroy)(struct lxc_storage *bdev);
+	/*容器存储设备创建*/
 	int (*create)(struct lxc_storage *bdev, const char *dest, const char *n,
 		      struct bdev_specs *specs, const struct lxc_conf *conf);
 	/* given original mount, rename the paths for cloned container */
@@ -67,6 +70,7 @@ struct lxc_storage_ops {
 		     struct lxc_storage *new, uint64_t newsize);
 	bool (*snapshot)(struct lxc_conf *conf, struct lxc_storage *orig,
 			 struct lxc_storage *new, uint64_t newsize);
+	//是否支持快照
 	bool can_snapshot;
 	bool can_backup;
 };
@@ -81,7 +85,7 @@ struct lxc_storage {
 	const char *type;/*存储类型*/
 	char *src;/*源地址，可能包含前缀*/
 	char *dest;/*挂载点*/
-	char *mntopts;/*挂载骖数*/
+	char *mntopts;/*挂载参数，选项*/
 	/* Turn the following into a union if need be. */
 	/* lofd is the open fd for the mounted loopback file. */
 	int lofd;

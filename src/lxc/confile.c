@@ -226,6 +226,7 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.namespace.share",            set_config_namespace_share,            get_config_namespace_share,            clr_config_namespace_share,            },
 	{ "lxc.time.offset.boot",           set_config_time_offset_boot,	   get_config_time_offset_boot,           clr_config_time_offset_boot,           },
 	{ "lxc.time.offset.monotonic",      set_config_time_offset_monotonic,      get_config_time_offset_monotonic,      clr_config_time_offset_monotonic,      },
+	//针对网络设备的配置
 	{ "lxc.net.flags",                  set_config_net_flags,                  get_config_net_flags,                  clr_config_net_flags,                  },
 	{ "lxc.net.hwaddr",                 set_config_net_hwaddr,                 get_config_net_hwaddr,                 clr_config_net_hwaddr,                 },
 	{ "lxc.net.ipv4.address",           set_config_net_ipv4_address,           get_config_net_ipv4_address,           clr_config_net_ipv4_address,           },
@@ -249,6 +250,7 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.net.veth.ipv6.route",        set_config_net_veth_ipv6_route,        get_config_net_veth_ipv6_route,        clr_config_net_veth_ipv6_route,        },
 	{ "lxc.net.veth.vlan.id",           set_config_net_veth_vlan_id,           get_config_net_veth_vlan_id,           clr_config_net_veth_vlan_id,           },
 	{ "lxc.net.veth.vlan.tagged.id",    set_config_net_veth_vlan_tagged_id,    get_config_net_veth_vlan_tagged_id,    clr_config_net_veth_vlan_tagged_id,    },
+	//网络配置入口，指明网络设备编号
 	{ "lxc.net.",                       set_config_net_nic,                    get_config_net_nic,                    clr_config_net_nic,                    },
 	{ "lxc.net",                        set_config_net,                        get_config_net,                        clr_config_net,                        },
 	{ "lxc.no_new_privs",	            set_config_no_new_privs,               get_config_no_new_privs,               clr_config_no_new_privs,               },
@@ -280,7 +282,7 @@ static struct lxc_config_t config_jump_table[] = {
 //配置项表数目
 static const size_t config_jump_table_size = sizeof(config_jump_table) / sizeof(struct lxc_config_t);
 
-//通过key查找对应的有效可配置项
+//通过key查找lxc可配置的项
 struct lxc_config_t *lxc_get_config(const char *key)
 {
 	size_t i;
@@ -292,7 +294,7 @@ struct lxc_config_t *lxc_get_config(const char *key)
 	return NULL;
 }
 
-//配置lxc网络
+//通过lxc.net 配置lxc无网络
 static int set_config_net(const char *key, const char *value,
 			  struct lxc_conf *lxc_conf, void *data)
 {
@@ -410,6 +412,7 @@ static int create_matched_ifnames(const char *value, struct lxc_conf *lxc_conf,
 	return ret;
 }
 
+//通过lxc.net.link设置网络设备link名称
 static int set_config_net_link(const char *key, const char *value,
 			       struct lxc_conf *lxc_conf, void *data)
 {
@@ -424,6 +427,7 @@ static int set_config_net_link(const char *key, const char *value,
 		return -1;
 
 	if (value[strlen(value) - 1] == '+' && netdev->type == LXC_NET_PHYS)
+	    //物理设备link名称
 		ret = create_matched_ifnames(value, lxc_conf, netdev);
 	else
 	    //非物理口，设置link名称
@@ -439,6 +443,7 @@ static int set_config_net_l2proxy(const char *key, const char *value,
 	unsigned int val = 0;
 	int ret;
 
+	//关闭设备的l2proxy功能
 	if (lxc_config_value_empty(value))
 		return clr_config_net_l2proxy(key, lxc_conf, data);
 
@@ -461,12 +466,14 @@ static int set_config_net_l2proxy(const char *key, const char *value,
 	return ret_set_errno(-1, EINVAL);
 }
 
+//通过lxc.net.name，设置网络设备名称
 static int set_config_net_name(const char *key, const char *value,
 			       struct lxc_conf *lxc_conf, void *data)
 {
 	struct lxc_netdev *netdev = data;
 
 	if (lxc_config_value_empty(value))
+	    /*清除网络设备名称*/
 		return clr_config_net_name(key, lxc_conf, data);
 
 	if (!netdev)
@@ -2662,6 +2669,7 @@ static int set_config_includefiles(const char *key, const char *value,
 	return lxc_config_read(value, lxc_conf, true);
 }
 
+//设置lxc.rootfs.path配置项设置
 static int set_config_rootfs_path(const char *key, const char *value,
 				  struct lxc_conf *lxc_conf, void *data)
 {
@@ -2670,6 +2678,7 @@ static int set_config_rootfs_path(const char *key, const char *value,
 	const char *container_path;
 
 	if (lxc_config_value_empty(value)) {
+	    /*清除rootfs对应路径*/
 		free(lxc_conf->rootfs.path);
 		lxc_conf->rootfs.path = NULL;
 		return 0;
@@ -2687,6 +2696,7 @@ static int set_config_rootfs_path(const char *key, const char *value,
 	if (tmp) {
 		*tmp = '\0';
 
+		/*设置bdev类型*/
 		ret = set_config_path_item(&lxc_conf->rootfs.bdev_type, dup);
 		if (ret < 0) {
 			free(dup);
@@ -2699,6 +2709,7 @@ static int set_config_rootfs_path(const char *key, const char *value,
 		container_path = value;
 	}
 
+	/*设置rootfs对应路径*/
 	ret = set_config_path_item(&lxc_conf->rootfs.path, container_path);
 	free(dup);
 
@@ -2711,12 +2722,14 @@ static int set_config_rootfs_managed(const char *key, const char *value,
 	return set_config_bool_item(&lxc_conf->rootfs.managed, value, true);
 }
 
+//lxc.rootfs.mount选项处理，设置存储设备的挂载点
 static int set_config_rootfs_mount(const char *key, const char *value,
 				   struct lxc_conf *lxc_conf, void *data)
 {
 	return set_config_path_item(&lxc_conf->rootfs.mount, value);
 }
 
+//lxc.rootfs.options选项处理，设置存储设备的挂载选项及挂载标记
 static int set_config_rootfs_options(const char *key, const char *value,
 				     struct lxc_conf *lxc_conf, void *data)
 {
@@ -5248,8 +5261,8 @@ static int get_config_includefiles(const char *key, char *retv, int inlen,
 
 static struct lxc_config_t *get_network_config_ops(const char *key,
 						   struct lxc_conf *lxc_conf,
-						   ssize_t *idx,
-						   char **deindexed_key)
+						   ssize_t *idx/*出参，配置的网卡索引*/,
+						   char **deindexed_key/*出参，针对网卡的配置项*/)
 {
 	int ret;
 	unsigned int tmpidx;
@@ -5258,6 +5271,7 @@ static struct lxc_config_t *get_network_config_ops(const char *key,
 	struct lxc_config_t *config = NULL;
 
 	/* check that this is a sensible network key */
+	//key必须以'lxc.net.'开头
 	if (strncmp("lxc.net.", key, 8)) {
 		ERROR("Invalid network configuration key \"%s\"", key);
 		return NULL;
@@ -5270,6 +5284,7 @@ static struct lxc_config_t *get_network_config_ops(const char *key,
 	}
 
 	/* lxc.net.<n> */
+	//必须通过数字，指明第n块网卡
 	if (!isdigit(*(key + 8))) {
 		ERROR("Failed to detect digit in string \"%s\"", key + 8);
 		goto on_error;
@@ -5285,6 +5300,7 @@ static struct lxc_config_t *get_network_config_ops(const char *key,
 		*idx_end = '\0';
 
 	/* parse current index */
+	//提取网卡索引tmpidx
 	ret = lxc_safe_uint((idx_start + 1), &tmpidx);
 	if (ret < 0) {
 		errno = -ret;
@@ -5318,6 +5334,7 @@ static struct lxc_config_t *get_network_config_ops(const char *key,
 			goto on_error;
 		}
 
+		//去除掉nic index,将lxc.net.<nic-index>.subkey转换为lxc.net.subkey获取配置操作info
 		memmove(copy + 8, idx_end + 1, strlen(idx_end + 1));
 		copy[strlen(key) - (numstrlen + 1)] = '\0';
 
@@ -5359,16 +5376,19 @@ static int set_config_net_nic(const char *key, const char *value,
 	if (lxc_config_value_empty(value))
 		return clr_config_net_nic(key, lxc_conf, data);
 
+	/*通过key,获得正在配置的nic编号及设置的配置项*/
 	config = get_network_config_ops(key, lxc_conf, &idx, &deindexed_key);
 	if (!config || idx < 0)
 		return -1;
 
+	/*获得指定编号的网卡*/
 	netdev = lxc_get_netdev_by_idx(lxc_conf, (unsigned int)idx, true);
 	if (!netdev) {
 		free(deindexed_key);
 		return -1;
 	}
 
+	/*针对netdev设置$deindexed_key的配置，配置值为value*/
 	ret = config->set(deindexed_key, value, lxc_conf, netdev);
 	free(deindexed_key);
 

@@ -54,8 +54,8 @@ int dir_clonepaths(struct lxc_storage *orig, struct lxc_storage *new,
 	return 0;
 }
 
-int dir_create(struct lxc_storage *bdev, const char *dest, const char *n,
-	       struct bdev_specs *specs, const struct lxc_conf *conf)
+int dir_create(struct lxc_storage *bdev, const char *dest/*目的地址*/, const char *n,
+	       struct bdev_specs *specs/*源地址*/, const struct lxc_conf *conf)
 {
 	__do_free char *bdev_src = NULL, *bdev_dest = NULL;
 	int ret;
@@ -64,10 +64,12 @@ int dir_create(struct lxc_storage *bdev, const char *dest, const char *n,
 
 	len = STRLITERALLEN("dir:");
 	if (specs && specs->dir)
+	    /*使用specs指定的目录*/
 		src = specs->dir;
 	else
 		src = dest;
 
+	//构造src地址
 	len += strlen(src) + 1;
 	bdev_src = malloc(len);
 	if (!bdev_src)
@@ -77,6 +79,7 @@ int dir_create(struct lxc_storage *bdev, const char *dest, const char *n,
 	if (ret < 0 || (size_t)ret >= len)
 		return ret_errno(EIO);
 
+	/*复制目的地址*/
 	bdev_dest = strdup(dest);
 	if (!bdev_dest)
 		return ret_errno(ENOMEM);
@@ -111,6 +114,7 @@ bool dir_detect(const char *path)
 	struct stat statbuf;
 	int ret;
 
+	//path以'dir:'开头，即为dir类型设备
 	if (!strncmp(path, "dir:", 4))
 		return true;
 
@@ -118,6 +122,7 @@ bool dir_detect(const char *path)
 	if (ret == -1 && errno == EPERM)
 		return log_error_errno(false, errno, "dir_detect: failed to look at \"%s\"", path);
 
+	/*path必须是目录*/
 	if (ret == 0 && S_ISDIR(statbuf.st_mode))
 		return true;
 
@@ -131,9 +136,11 @@ int dir_mount(struct lxc_storage *bdev)
 	int ret;
 	const char *src;
 
+	/*type必须为dir*/
 	if (strcmp(bdev->type, "dir"))
 		return -22;
 
+	/*src,dest必须存在*/
 	if (!bdev->src || !bdev->dest)
 		return -22;
 
@@ -145,8 +152,10 @@ int dir_mount(struct lxc_storage *bdev)
 	if (ret < 0)
 		return log_error_errno(-EINVAL, EINVAL, "Failed to parse mount propagation options \"%s\"", bdev->mntopts);
 
+	//返回除去前缀后的路径
 	src = lxc_storage_get_path(bdev->src, bdev->type);
 
+	/*通过bind完成目录挂载,将src目录绑定在bdev->dest下*/
 	ret = mount(src, bdev->dest, "bind", MS_BIND | MS_REC | mntflags | pflags, mntdata);
 	if (ret < 0)
 		return log_error_errno(-errno, errno, "Failed to mount \"%s\" on \"%s\"", src, bdev->dest);
@@ -169,11 +178,14 @@ int dir_mount(struct lxc_storage *bdev)
 
 int dir_umount(struct lxc_storage *bdev)
 {
+    //只处理dir类型的设备
 	if (strcmp(bdev->type, "dir"))
 		return ret_errno(EINVAL);
 
+	//src,dest必须已设置
 	if (!bdev->src || !bdev->dest)
 		return ret_errno(EINVAL);
 
+	//移除挂载
 	return umount2(bdev->dest, MNT_DETACH);
 }

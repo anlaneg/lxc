@@ -73,6 +73,7 @@ static const struct lxc_storage_ops dir_ops = {
     .umount = &dir_umount,
     .clone_paths = &dir_clonepaths,
     .destroy = &dir_destroy,
+    /*dir类型存储设备创建*/
     .create = &dir_create,
     .copy = NULL,
     .snapshot = NULL,
@@ -185,6 +186,7 @@ static const struct lxc_storage_type bdevs[] = {
 
 static const size_t numbdevs = sizeof(bdevs) / sizeof(struct lxc_storage_type);
 
+/*通过storage type或者通过path的前缀获得type来查询lxc_storage_type*/
 static const struct lxc_storage_type *get_storage_by_name(const char *path,
 							  const char *type)
 {
@@ -214,6 +216,7 @@ static const struct lxc_storage_type *get_storage_by_name(const char *path,
 	return &bdevs[i];
 }
 
+/*取容器配置对应的lxc_storage_type*/
 static const struct lxc_storage_type *storage_query(struct lxc_conf *conf)
 {
 	size_t i;
@@ -221,10 +224,12 @@ static const struct lxc_storage_type *storage_query(struct lxc_conf *conf)
 	const char *path = conf->rootfs.path;
 	const char *type = conf->rootfs.bdev_type;
 
+	/*取指定类型对应的存储设备*/
 	bdev = get_storage_by_name(path, type);
 	if (bdev)
 		return bdev;
 
+	/*通过detect反向检查是否为对应的storage_type*/
 	for (i = 0; i < numbdevs; i++)
 		if (bdevs[i].ops->detect(path))
 			break;
@@ -242,10 +247,12 @@ static struct lxc_storage *storage_get(const char *type)
 	size_t i;
 	struct lxc_storage *bdev;
 
+	/*查找指定类型的bdev*/
 	for (i = 0; i < numbdevs; i++)
 		if (strcmp(bdevs[i].name, type) == 0)
 			break;
 
+	/*没有找到对应的bdev,返回NULL*/
 	if (i == numbdevs)
 		return NULL;
 
@@ -262,7 +269,7 @@ static struct lxc_storage *storage_get(const char *type)
 	return bdev;
 }
 
-static struct lxc_storage *do_storage_create(const char *dest, const char *type,
+static struct lxc_storage *do_storage_create(const char *dest, const char *type/*块设备类型名称*/,
 					     const char *cname,
 					     struct bdev_specs *specs,
 					     const struct lxc_conf *conf)
@@ -278,6 +285,7 @@ static struct lxc_storage *do_storage_create(const char *dest, const char *type,
 	if (!bdev)
 		return NULL;
 
+	//创建type类型的块设备
 	ret = bdev->ops->create(bdev, dest, cname, specs, conf);
 	if (ret < 0) {
 		storage_put(bdev);
@@ -528,7 +536,7 @@ on_error_put_orig:
  * @specs: details about the backing store to create, like fstype
  */
 struct lxc_storage *storage_create(const char *dest, const char *type,
-				   const char *cname, struct bdev_specs *specs,
+				   const char *cname/*容器名称*/, struct bdev_specs *specs,
 				   const struct lxc_conf *conf)
 {
 	int ret;
@@ -536,8 +544,10 @@ struct lxc_storage *storage_create(const char *dest, const char *type,
 	char *best_options[] = {"btrfs", "zfs", "lvm", "dir", "rbd", NULL};
 
 	if (!type)
+	    /*如未指定，则使用dir*/
 		return do_storage_create(dest, "dir", cname, specs, conf);
 
+	/*如指定为best，则按best_options顺序，选取首个可成功创建的存储*/
 	ret = strcmp(type, "best");
 	if (ret == 0) {
 		int i;
@@ -555,6 +565,7 @@ struct lxc_storage *storage_create(const char *dest, const char *type,
 
 	/* -B lvm,dir */
 	if (strchr(type, ',')) {
+	    //支持形如-B lvm,dir格式的块设备类型提取
 		__do_free char *dup = NULL;
 		char *token;
 
@@ -566,6 +577,7 @@ struct lxc_storage *storage_create(const char *dest, const char *type,
 		}
 	}
 
+	/*其它块类型设备创建*/
 	return do_storage_create(dest, type, cname, specs, conf);
 }
 
@@ -591,8 +603,11 @@ struct lxc_storage *storage_init(struct lxc_conf *conf)
 {
 	struct lxc_storage *bdev;
 	const struct lxc_storage_type *q;
+	//rootfs所在位置
 	const char *src = conf->rootfs.path;
+	//rootfs挂载点
 	const char *dst = conf->rootfs.mount;
+	//rootfs挂载选项
 	const char *mntopts = conf->rootfs.options;
 
 	BUILD_BUG_ON(LXC_STORAGE_INTERNAL_OVERLAY_RESTORE <= LXC_CLONE_MAXFLAGS);
@@ -600,6 +615,7 @@ struct lxc_storage *storage_init(struct lxc_conf *conf)
 	if (!src)
 		return NULL;
 
+	//查询容器对应的存储设备类型，并创建对应的bdev,初始化并返回
 	q = storage_query(conf);
 	if (!q)
 		return NULL;

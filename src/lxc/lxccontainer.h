@@ -313,7 +313,7 @@ struct lxc_container {
 	 * \return \c true on success, else \c false.
 	 */
 	bool (*create)(struct lxc_container *c, const char *t, const char *bdevtype,
-			struct bdev_specs *specs, int flags, char *const argv[]);
+			struct bdev_specs *specs, int flags, char *const argv[]);//容器创建
 
 	/*!
 	 * \brief Create a container (list variant).

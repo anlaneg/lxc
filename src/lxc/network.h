@@ -162,9 +162,10 @@ struct lxc_netdev {
 	int ifindex;//设备ifindex
 	int type;//网络设备类型（LXC_NET_VETH,ipvlan,macvlan等）
 	int flags;
-	//网络设备名称
+	//网络设备link名称
 	char link[IFNAMSIZ];
 	bool l2proxy;
+	//网络设备名称，通过lxc.net.name设置
 	char name[IFNAMSIZ];
 	char created_name[IFNAMSIZ];//生成的本端接口名称
 	char *hwaddr;//硬件地址

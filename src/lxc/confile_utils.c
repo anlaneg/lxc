@@ -168,6 +168,7 @@ bool lxc_config_value_empty(const char *value)
 	return true;
 }
 
+//创建指定序号的lxc_netdev,并将其加入到networks链表中
 struct lxc_netdev *lxc_network_add(struct lxc_list *networks, int idx, bool tail)
 {
 	struct lxc_list *newlist;
@@ -183,6 +184,7 @@ struct lxc_netdev *lxc_network_add(struct lxc_list *networks, int idx, bool tail
 	lxc_list_init(&netdev->ipv6);
 
 	/* give network a unique index */
+	//指明netdev编号
 	netdev->idx = idx;
 
 	/* prepare new list */
@@ -207,7 +209,7 @@ struct lxc_netdev *lxc_network_add(struct lxc_list *networks, int idx, bool tail
  * allocates a new one if it couldn't be found.
  */
 struct lxc_netdev *lxc_get_netdev_by_idx(struct lxc_conf *conf,
-					 unsigned int idx, bool allocate)
+					 unsigned int idx, bool allocate/*如不存在，是否新增*/)
 {
 	struct lxc_netdev *netdev = NULL;
 	struct lxc_list *networks = &conf->network;
@@ -215,6 +217,7 @@ struct lxc_netdev *lxc_get_netdev_by_idx(struct lxc_conf *conf,
 
 	/* lookup network */
 	if (!lxc_list_empty(networks)) {
+	    /*遍历networks，获得idx号netdev*/
 		lxc_list_for_each(insert, networks) {
 			netdev = insert->elem;
 			if (netdev->idx == idx)
@@ -227,6 +230,7 @@ struct lxc_netdev *lxc_get_netdev_by_idx(struct lxc_conf *conf,
 	if (!allocate)
 		return NULL;
 
+	/*idx号netdev不存在，创建并添加*/
 	return lxc_network_add(insert, idx, true);
 }
 

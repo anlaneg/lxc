@@ -1782,7 +1782,8 @@ static int lxc_setup_console(const struct lxc_rootfs *rootfs,
 	return lxc_setup_ttydir_console(rootfs, console, ttydir, pty_mnt_fd);
 }
 
-static int parse_mntopt(char *opt, unsigned long *flags, char **data, size_t size)
+//解析挂载选项
+static int parse_mntopt(char *opt, unsigned long *flags/*出参，挂载选项*/, char **data, size_t size)
 {
 	ssize_t ret;
 
@@ -1792,13 +1793,14 @@ static int parse_mntopt(char *opt, unsigned long *flags, char **data, size_t siz
 		 * If opt is found in mount_opt, set or clear flags.
 		 * Otherwise append it to data.
 		 */
-	        //选项中没有'='号，认为仅是flags,遍历所有已知flags,合入到flags中
+	    //选项中没有'='号，认为仅是flags,遍历所有已知flags,合入到flags中
 		size_t opt_len = strlen(opt);
 		for (struct mount_opt *mo = &mount_opt[0]; mo->name != NULL; mo++) {
 			size_t mo_name_len = strlen(mo->name);
 
 			if (opt_len == mo_name_len && strncmp(opt, mo->name, mo_name_len) == 0) {
 				if (mo->clear)
+				    /*选项清除*/
 					*flags &= ~mo->flag;
 				else
 					*flags |= mo->flag;
@@ -1814,7 +1816,7 @@ static int parse_mntopt(char *opt, unsigned long *flags, char **data, size_t siz
 			return log_error_errno(ret, errno, "Failed to append \",\" to %s", *data);
 	}
 
-	//合入data
+	//将选项合入到data中
 	ret = strlcat(*data, opt, size);
 	if (ret < 0)
 		return log_error_errno(ret, errno, "Failed to append \"%s\" to %s", opt, *data);
@@ -1823,12 +1825,13 @@ static int parse_mntopt(char *opt, unsigned long *flags, char **data, size_t siz
 }
 
 //解析挂载选项，分析出挂载参数及flags
-int parse_mntopts(const char *mntopts, unsigned long *mntflags/*挂载flags*/, char **mntdata/*挂载参数*/)
+int parse_mntopts(const char *mntopts, unsigned long *mntflags/*出参，挂载flags*/, char **mntdata/*出参，挂载参数*/)
 {
 	__do_free char *mntopts_new = NULL, *mntopts_dup = NULL;
 	char *mntopt_cur = NULL;
 	size_t size;
 
+	/*出参，必须为空*/
 	if (*mntdata || *mntflags)
 		return ret_errno(EINVAL);
 
@@ -1844,7 +1847,7 @@ int parse_mntopts(const char *mntopts, unsigned long *mntflags/*挂载flags*/, c
 	if (!mntopts_new)
 		return ret_errno(ENOMEM);
 
-	/*遍历mnt参数*/
+	/*以','号遍历mnt参数*/
 	lxc_iterate_parts(mntopt_cur, mntopts_dup, ",")
 		if (parse_mntopt(mntopt_cur, mntflags, &mntopts_new, size) < 0)
 			return ret_errno(EINVAL);
@@ -1855,6 +1858,7 @@ int parse_mntopts(const char *mntopts, unsigned long *mntflags/*挂载flags*/, c
 	return 0;
 }
 
+/*按propagation_opt解析opt选项，通过flags返回相应值*/
 static void parse_propagationopt(char *opt, unsigned long *flags)
 {
 	struct mount_opt *mo;
@@ -1873,6 +1877,7 @@ static void parse_propagationopt(char *opt, unsigned long *flags)
 	}
 }
 
+/*解析mntopts中的pflags配置*/
 int parse_propagationopts(const char *mntopts, unsigned long *pflags)
 {
 	__do_free char *s = NULL;
@@ -1886,6 +1891,7 @@ int parse_propagationopts(const char *mntopts, unsigned long *pflags)
 		return log_error_errno(-ENOMEM, errno, "Failed to allocate memory");
 
 	*pflags = 0L;
+	/*按','号分隔并遍历s*/
 	lxc_iterate_parts(p, s, ",")
 		parse_propagationopt(p, pflags);
 
@@ -2586,7 +2592,7 @@ int setup_proc_filesystem(struct lxc_list *procs, pid_t pid)
 
 static char *default_rootfs_mount = LXCROOTFSMOUNT;
 
-//lxc_conf初始化
+//创建lxc_conf，并初始化
 struct lxc_conf *lxc_conf_init(void)
 {
 	int i;

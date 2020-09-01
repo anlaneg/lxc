@@ -1406,7 +1406,8 @@ static int do_start(void *data)
 	/* Reset the environment variables the user requested in a clear
 	 * environment.
 	 */
-	ret = clearenv();//清除掉所有env变量
+	//清除掉所有env变量
+	ret = clearenv();
 	/* Don't error out though. */
 	if (ret < 0)
 		SYSERROR("Failed to clear environment.");
@@ -2257,7 +2258,7 @@ static struct lxc_operations start_ops = {
 	.post_start = post_start
 };
 
-int lxc_start(char *const argv[]/*容器名称*/, struct lxc_handler *handler/*容器的handler*/,
+int lxc_start(char *const argv[]/*容器要执行的命令行*/, struct lxc_handler *handler/*容器的handler*/,
 	      const char *lxcpath, bool daemonize/*是否采用daemon方式*/, int *error_num)
 {
     //启动参数

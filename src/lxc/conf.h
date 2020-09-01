@@ -152,10 +152,14 @@ struct lxc_tty_info {
 struct lxc_rootfs {
 	int mntpt_fd;
 	int dev_mntpt_fd;
-	char *path;//rootfs对应的目录
+	//rootfs对应的路径
+	char *path;
+	//指定存储设备的挂载地址
 	char *mount;
+	//存储设备类型,例如lvm,dir等
 	char *bdev_type;
 	char *options;
+	//存储设备的挂载选项
 	unsigned long mountflags;
 	char *data;
 	bool managed;
@@ -371,10 +375,10 @@ struct lxc_conf {
 	size_t unexpanded_alloced;
 
 	/* default command for lxc-execute */
-	char *execute_cmd;
+	char *execute_cmd;/**/
 
 	/* init command */
-	char *init_cmd;
+	char *init_cmd;/*容器的起始命令*/
 
 	/* if running in a new user namespace, the UID/GID that init and COMMAND
 	 * should run under when using lxc-execute */

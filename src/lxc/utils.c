@@ -857,7 +857,7 @@ out1:
  * is something like 'sshd', then return $templatepath/lxc-sshd.
  * On success return the template, on error return NULL.
  */
-//返回模块文件的绝对地址
+//返回模板文件的绝对地址
 char *get_template_path(const char *t)
 {
 	int ret, len;

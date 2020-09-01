@@ -176,6 +176,7 @@ static int ongoing_create(struct lxc_container *c)
 	return LXC_CREATE_INCOMPLETE;
 }
 
+//创建容器目录下的LXC_PARTIAL_FNAME文件
 static int create_partial(struct lxc_container *c)
 {
 	__do_free char *path = NULL;
@@ -952,7 +953,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 	if (!handler)
 		return false;
 
-	//构造命令行参数
+	//用户未指定容器命令行参数，构造它
 	if (!argv) {
 		if (useinit && conf->execute_cmd)
 			argv = init_cmd = split_init_cmd(conf->execute_cmd);
@@ -967,6 +968,7 @@ static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const a
 			lxc_put_handler(handler);
 			return false;
 		}
+		/*默认执行/sbin/init程序*/
 		argv = default_args;
 	}
 
@@ -1185,7 +1187,7 @@ on_error:
 
 //容器启动
 static bool lxcapi_start(struct lxc_container *c, int useinit,
-			 char *const argv[]/*用户传入的参数*/)
+			 char *const argv[]/*用户传入的容器运行参数*/)
 {
 	bool ret;
 
@@ -1287,12 +1289,14 @@ static bool create_container_dir(struct lxc_container *c)
 	if (!s)
 		return false;
 
+	//构造容器目录名称
 	ret = snprintf(s, len, "%s/%s", c->config_path, c->name);
 	if (ret < 0 || (size_t)ret >= len) {
 		free(s);
 		return false;
 	}
 
+	//创建此目录
 	ret = do_create_container_dir(s, c->lxc_conf);
 	free(s);
 
@@ -1303,7 +1307,7 @@ static bool create_container_dir(struct lxc_container *c)
  * storage_create(), it returns a mounted bdev on success, NULL on error.
  */
 static struct lxc_storage *do_storage_create(struct lxc_container *c,
-					     const char *type,
+					     const char *type/*块设备类型*/,
 					     struct bdev_specs *specs)
 {
 	__do_free char *dest = NULL;
@@ -1322,17 +1326,20 @@ static struct lxc_storage *do_storage_create(struct lxc_container *c,
 		const char *lxcpath = do_lxcapi_get_config_path(c);
 		len = strlen(c->name) + 1 + strlen(lxcpath) + 1 + strlen(LXC_ROOTFS_DNAME) + 1;
 		dest = must_realloc(NULL, len);
+		//写rootfs目录路径到dest中
 		ret = snprintf(dest, len, "%s/%s/%s", lxcpath, c->name, LXC_ROOTFS_DNAME);
 	}
 	if (ret < 0 || (size_t)ret >= len)
 		return NULL;
 
+	/*存储设备创建*/
 	bdev = storage_create(dest, type, c->name, specs, c->lxc_conf);
 	if (!bdev) {
 		ERROR("Failed to create \"%s\" storage", type);
 		return NULL;
 	}
 
+	//设置容器的rootfs路径
 	if (!c->set_config_item(c, "lxc.rootfs.path", bdev->src)) {
 		ERROR("Failed to set \"lxc.rootfs.path = %s\"", bdev->src);
 		storage_put(bdev);
@@ -1360,15 +1367,18 @@ static char *lxctemplatefilename(char *tpath)
 {
 	char *p;
 
+	/*指向路径最后一个字符*/
 	p = tpath + strlen(tpath) - 1;
 	while ( (p-1) >= tpath && *(p-1) != '/')
 		p--;
 
+	/*自p开始指向模板文件名称*/
 	return p;
 }
 
-static bool create_run_template(struct lxc_container *c, char *tpath,
-				bool need_null_stdfds, char *const argv[])
+//创建进程并运行template脚本，完成rootfs创建
+static bool create_run_template(struct lxc_container *c, char *tpath/*容器模板路径*/,
+				bool need_null_stdfds/*stdfds是否重定向到null*/, char *const argv[])
 {
 	int ret;
 	pid_t pid;
@@ -1376,6 +1386,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 	if (!tpath)
 		return true;
 
+	//产生子进程通过模板完成容器创建
 	pid = fork();
 	if (pid < 0) {
 		SYSERROR("Failed to fork task for container creation template");
@@ -1391,6 +1402,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 		struct lxc_conf *conf = c->lxc_conf;
 		uid_t euid;
 
+		/*将stdfds重定向到null*/
 		if (need_null_stdfds) {
 			ret = null_stdfds();
 			if (ret < 0)
@@ -1415,6 +1427,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 				SYSERROR("Failed to recursively turn root mount tree into dependent mount. Continuing...");
 		}
 
+		//除dir,btrfs外，其它均要求root权限
 		if (strcmp(bdev->type, "dir") != 0 && strcmp(bdev->type, "btrfs") != 0) {
 			if (euid != 0) {
 				ERROR("Unprivileged users can only create "
@@ -1481,8 +1494,10 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 		newargv = malloc(nargs * sizeof(*newargv));
 		if (!newargv)
 			_exit(EXIT_FAILURE);
+		/*newargv[0] 模板文件名*/
 		newargv[0] = lxctemplatefilename(tpath);
 
+		/*newargv[1] 构造参数--path*/
 		/* --path */
 		len = strlen(c->config_path) + strlen(c->name) + strlen("--path=") + 2;
 		patharg = malloc(len);
@@ -1494,6 +1509,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 			_exit(EXIT_FAILURE);
 		newargv[1] = patharg;
 
+		/*newargv[2] 构造容器名称参数 --name*/
 		/* --name */
 		len = strlen("--name=") + strlen(c->name) + 1;
 		namearg = malloc(len);
@@ -1505,6 +1521,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 			_exit(EXIT_FAILURE);
 		newargv[2] = namearg;
 
+		/*newargv[3] 指定容器rootfs路径*/
 		/* --rootfs */
 		len = strlen("--rootfs=") + 1 + strlen(bdev->dest);
 		rootfsarg = malloc(len);
@@ -1516,6 +1533,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 			_exit(EXIT_FAILURE);
 		newargv[3] = rootfsarg;
 
+		/*复用其它参数*/
 		/* add passed-in args */
 		if (argv)
 			for (i = 4; i < nargs; i++)
@@ -1545,6 +1563,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 			if (!n2)
 				_exit(EXIT_FAILURE);
 
+			/*newargv[0] 模板路径*/
 			newargv[0] = tpath;
 			tpath = "lxc-usernsexec";
 			n2[0] = "lxc-usernsexec";
@@ -1662,6 +1681,7 @@ static bool create_run_template(struct lxc_container *c, char *tpath,
 			newargv = n2;
 		}
 
+		//执行template脚本,完成rootfs构建
 		execvp(tpath, newargv);
 		SYSERROR("Failed to execute template %s", tpath);
 		_exit(EXIT_FAILURE);
@@ -1838,7 +1858,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 		return false;
 
 	if (t) {
-	    /*取模块对应路径*/
+	    /*取模板对应路径*/
 		tpath = get_template_path(t);
 		if (!tpath) {
 			ERROR("Unknown template \"%s\"", t);
@@ -1858,7 +1878,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 	}
 
 	if (!c->lxc_conf) {
-	    //加载默认配置
+	    //加载容器默认配置
 		if (!do_lxcapi_load_config(c, lxc_global_config_value("lxc.default_config"))) {
 			ERROR("Error loading default configuration file %s",
 			      lxc_global_config_value("lxc.default_config"));
@@ -1910,6 +1930,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 
 	mask = umask(0022);
 
+	//产生进程来创建存储设备
 	/* Create the storage.
 	 * Note we can't do this in the same task as we use to execute the
 	 * template because of the way zfs works.
@@ -1925,6 +1946,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 	if (pid == 0) { /* child */
 		struct lxc_storage *bdev = NULL;
 
+		/*创建存储设备*/
 		bdev = do_storage_create(c, bdevtype, specs);
 		if (!bdev) {
 			ERROR("Failed to create %s storage for %s",
@@ -1946,9 +1968,11 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 		_exit(EXIT_SUCCESS);
 	}
 
+	//等待创建存储设备的子进程退出
 	if (wait_for_pid(pid) != 0)
 		goto out_unlock;
 
+	//刚才创建了存储设备，重新加载配置文件以便得到rootfs路径
 	/* Reload config to get the rootfs. */
 	lxc_conf_free(c->lxc_conf);
 	c->lxc_conf = NULL;
@@ -1964,6 +1988,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 	 */
 	do_lxcapi_clear_config(c);
 
+	/*填写容器配置，如果有模板，则输出配置文件header*/
 	if (t) {
 		if (!prepend_lxc_header(c->configfile, tpath, argv)) {
 			ERROR("Failed to prepend header to config file");
@@ -1971,6 +1996,7 @@ static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 		}
 	}
 
+	//加载配置文件
 	ret = load_config_locked(c, c->configfile);
 
 out_unlock:
@@ -1996,7 +2022,7 @@ free_tpath:
 	return ret;
 }
 
-//完成容器创建
+//通过模板，参数完成容器创建
 static bool lxcapi_create(struct lxc_container *c, const char *t/*容器模板文件*/,
 			  const char *bdevtype, struct bdev_specs *specs,
 			  int flags, char *const argv[])
@@ -2730,6 +2756,7 @@ static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file)
 		}
 	}
 
+	/*创建容器对应的目录*/
 	if (!create_container_dir(c))
 		return false;
 
@@ -2753,7 +2780,7 @@ static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file)
 	if (fd < 0)
 		goto on_error;
 
-	//写配置文件
+	//写容器对应的配置文件
 	lret = write_config(fd, c->lxc_conf);
 	close(fd);
 	if (lret < 0)
@@ -3211,24 +3238,26 @@ static bool do_lxcapi_destroy_with_snapshots(struct lxc_container *c)
 
 WRAP_API(bool, lxcapi_destroy_with_snapshots)
 
-int lxc_set_config_item_locked(struct lxc_conf *conf, const char *key,
+/*lxc配置项设置*/
+int lxc_set_config_item_locked(struct lxc_conf *conf, const char *key/*配置项名称*/,
 			       const char *v)
 {
 	int ret;
 	struct lxc_config_t *config;
 	bool bret = true;
 
+	/*取key对应的配置操作函数*/
 	config = lxc_get_config(key);
 	if (!config)
 		return -EINVAL;
 
-	//设置指定配置项
+	//通过set回调，完成配置项指定
 	ret = config->set(key, v, conf, NULL);
 	if (ret < 0)
 		return -EINVAL;
 
 	if (lxc_config_value_empty(v))
-	    /*配置项value为空，执行配置清除*/
+	    /*如果value为空，则执行配置清除*/
 		do_clear_unexp_config_line(conf, key);
 	else
 		bret = do_append_unexp_config_line(conf, key, v);
@@ -3238,9 +3267,9 @@ int lxc_set_config_item_locked(struct lxc_conf *conf, const char *key,
 	return 0;
 }
 
-//设置配置项
-static bool do_set_config_item_locked(struct lxc_container *c, const char *key,
-				      const char *v)
+//容器设置配置项
+static bool do_set_config_item_locked(struct lxc_container *c, const char *key/*配置项名称*/,
+				      const char *v/*配置项取值*/)
 {
 	int ret;
 
@@ -3257,7 +3286,7 @@ static bool do_set_config_item_locked(struct lxc_container *c, const char *key,
 	return true;
 }
 
-//设置配置项
+//设置lxc的指定配置项
 static bool do_lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v)
 {
 	bool b = false;
@@ -5457,6 +5486,7 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 	c->rename = lxcapi_rename;
 	c->save_config = lxcapi_save_config;
 	c->get_keys = lxcapi_get_keys;
+	//容器创建函数
 	c->create = lxcapi_create;
 	c->createl = lxcapi_createl;
 	c->shutdown = lxcapi_shutdown;
