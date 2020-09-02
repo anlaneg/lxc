@@ -565,7 +565,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 		if (handler->conf->reboot)
 			lxc_netdev_delete_by_name(veth1);
 	} else {
-	        //生成veth1接口名称
+	    //生成veth1接口名称
 		err = snprintf(veth1buf, sizeof(veth1buf), "vethXXXXXX");
 		if (err < 0 || (size_t)err >= sizeof(veth1buf))
 			return -1;
@@ -640,7 +640,7 @@ static int instantiate_veth(struct lxc_handler *handler, struct lxc_netdev *netd
 
 	//如果是桥模式，则将veth1接口添加到桥上
 	if (!is_empty_string(netdev->link) && netdev->priv.veth_attr.mode == VETH_MODE_BRIDGE) {
-	    	//如果采用桥模式，则将veth1附着到bridge上
+	    //如果采用桥模式，则将veth1附着到bridge上
 		if (!lxc_nic_exists(netdev->link)) {
 			SYSERROR("Failed to attach \"%s\" to bridge \"%s\", bridge interface doesn't exist", veth1, netdev->link);
 			goto out_delete;

@@ -513,6 +513,7 @@ static struct lxc_veth_mode {
     { "router", VETH_MODE_ROUTER },
 };
 
+//当前支持"bridge","router"两种mode
 int lxc_veth_mode_to_flag(int *mode, const char *value)
 {
 	for (size_t i = 0; i < sizeof(veth_mode) / sizeof(veth_mode[0]); i++) {
@@ -548,6 +549,7 @@ static struct lxc_macvlan_mode {
     { "passthru", MACVLAN_MODE_PASSTHRU },
 };
 
+/*按value字面值，确认macvlan_mode,并设置给mode*/
 int lxc_macvlan_mode_to_flag(int *mode, const char *value)
 {
 	size_t i;

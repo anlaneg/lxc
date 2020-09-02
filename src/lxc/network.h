@@ -159,10 +159,12 @@ union netdev_p {
  */
 struct lxc_netdev {
 	ssize_t idx;
-	int ifindex;//设备ifindex
-	int type;//网络设备类型（LXC_NET_VETH,ipvlan,macvlan等）
+	//设备ifindex
+	int ifindex;
+	//网络设备类型（LXC_NET_VETH,ipvlan,macvlan等）
+	int type;
 	int flags;
-	//网络设备link名称
+	//网络设备link名称,通过lxc.net.link设置
 	char link[IFNAMSIZ];
 	bool l2proxy;
 	//网络设备名称，通过lxc.net.name设置

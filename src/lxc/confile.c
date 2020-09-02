@@ -307,6 +307,7 @@ static int set_config_net(const char *key, const char *value,
 	return clr_config_net(key, lxc_conf, data);
 }
 
+//通过lxc.net.type设置netdev的类型
 static int set_config_net_type(const char *key, const char *value,
 			       struct lxc_conf *lxc_conf, void *data)
 {
@@ -324,6 +325,7 @@ static int set_config_net_type(const char *key, const char *value,
 		lxc_list_init(&netdev->priv.veth_attr.ipv6_routes);
 		lxc_list_init(&netdev->priv.veth_attr.vlan_tagged_ids);
 		if (!lxc_veth_flag_to_mode(netdev->priv.veth_attr.mode))
+		    /*默认将veth类型指定为桥模式*/
 			lxc_veth_mode_to_flag(&netdev->priv.veth_attr.mode, "bridge");
 	} else if (strcmp(value, "macvlan") == 0) {
 		netdev->type = LXC_NET_MACVLAN;
@@ -351,6 +353,7 @@ static int set_config_net_type(const char *key, const char *value,
 	return 0;
 }
 
+//通过“lxc.net.flags”设置netdev的flags为up
 static int set_config_net_flags(const char *key, const char *value,
 				struct lxc_conf *lxc_conf, void *data)
 {
@@ -436,6 +439,7 @@ static int set_config_net_link(const char *key, const char *value,
 	return ret;
 }
 
+//通过lxc.net.l2proxy设置指定网卡的l2proxy
 static int set_config_net_l2proxy(const char *key, const char *value,
 				     struct lxc_conf *lxc_conf, void *data)
 {
@@ -454,6 +458,7 @@ static int set_config_net_l2proxy(const char *key, const char *value,
 	if (ret < 0)
 		return ret_set_errno(-1, -ret);
 
+	/*开启或关闭l2proxy*/
 	switch (val) {
 	case 0:
 		netdev->l2proxy = false;
@@ -482,18 +487,20 @@ static int set_config_net_name(const char *key, const char *value,
 	return network_ifname(netdev->name, value, sizeof(netdev->name));
 }
 
-
+//通过‘lxc.net.veth.mode’设置veth的mode
 static int set_config_net_veth_mode(const char *key, const char *value,
 				       struct lxc_conf *lxc_conf, void *data)
 {
 	struct lxc_netdev *netdev = data;
 
 	if (lxc_config_value_empty(value))
+	    /*veth mode清除*/
 		return clr_config_net_veth_mode(key, lxc_conf, data);
 
 	if (!netdev)
 		return -1;
 
+	/*设置veth的mode*/
 	return lxc_veth_mode_to_flag(&netdev->priv.veth_attr.mode, value);
 }
 
@@ -574,6 +581,7 @@ static int set_config_net_veth_vlan_tagged_id(const char *key, const char *value
 	return 0;
 }
 
+//通过lxc.net.macvlan.mode设置netdev的macvlan_mode
 static int set_config_net_macvlan_mode(const char *key, const char *value,
 				       struct lxc_conf *lxc_conf, void *data)
 {
@@ -677,6 +685,7 @@ static int set_config_net_vlan_id(const char *key, const char *value,
 	return 0;
 }
 
+//通过lxc.net.mtu设置netdev的mtu
 static int set_config_net_mtu(const char *key, const char *value,
 			      struct lxc_conf *lxc_conf, void *data)
 {

@@ -5475,11 +5475,13 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 	c->load_config = lxcapi_load_config;
 	c->want_daemonize = lxcapi_want_daemonize;
 	c->want_close_all_fds = lxcapi_want_close_all_fds;
+	//容器启动函数
 	c->start = lxcapi_start;
 	c->startl = lxcapi_startl;
 	c->stop = lxcapi_stop;
 	c->config_file_name = lxcapi_config_file_name;
 	c->wait = lxcapi_wait;
+	//容器配置
 	c->set_config_item = lxcapi_set_config_item;
 	c->destroy = lxcapi_destroy;
 	c->destroy_with_snapshots = lxcapi_destroy_with_snapshots;
