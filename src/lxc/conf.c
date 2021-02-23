@@ -2227,6 +2227,7 @@ static int mount_file_entries(const struct lxc_rootfs *rootfs, FILE *file,
 	char buf[PATH_MAX];
 	struct mntent mntent;
 
+	//自file中读取一行内容，并创建mntent
 	while (getmntent_r(file, &mntent, buf, sizeof(buf))) {
 		int ret;
 
@@ -2314,16 +2315,19 @@ FILE *make_anonymous_mount_file(struct lxc_list *mount,
 		TRACE("Created temporary mount file");
 	}
 
+	/*遍历每个待挂载设备*/
 	lxc_list_for_each (iterator, mount) {
 		size_t len;
 
 		mount_entry = iterator->elem;
 		len = strlen(mount_entry);
 
+		//将待挂载信息写入到fd中
 		ret = lxc_write_nointr(fd, mount_entry, len);
 		if (ret != len)
 			return NULL;
 
+		//向fd中写入换行
 		ret = lxc_write_nointr(fd, "\n", 1);
 		if (ret != 1)
 			return NULL;
@@ -2340,6 +2344,7 @@ FILE *make_anonymous_mount_file(struct lxc_list *mount,
 	if (ret < 0)
 		return NULL;
 
+	/*返回此写入挂载信息的file*/
 	f = fdopen(fd, "re+");
 	if (f)
 		move_fd(fd); /* Transfer ownership of fd. */
@@ -2348,11 +2353,12 @@ FILE *make_anonymous_mount_file(struct lxc_list *mount,
 
 static int setup_mount_entries(const struct lxc_conf *conf,
 			       const struct lxc_rootfs *rootfs,
-			       struct lxc_list *mount, const char *lxc_name,
+			       struct lxc_list *mount/*待挂载目录列表*/, const char *lxc_name,
 			       const char *lxc_path)
 {
 	__do_fclose FILE *f = NULL;
 
+	/*创建临时文件，写入待挂载设备信息列表*/
 	f = make_anonymous_mount_file(mount, conf->lsm_aa_allow_nesting);
 	if (!f)
 		return -1;
@@ -3356,6 +3362,7 @@ int lxc_setup(struct lxc_handler *handler)
 	if (ret < 0)
 		return log_error(-1, "Failed to setup mounts");
 
+	/*mount_list不为空，则启动挂载信息*/
 	if (!lxc_list_empty(&lxc_conf->mount_list)) {
 		ret = setup_mount_entries(lxc_conf, &lxc_conf->rootfs,
 					  &lxc_conf->mount_list, name, lxcpath);

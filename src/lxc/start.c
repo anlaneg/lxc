@@ -2240,6 +2240,7 @@ static int start(struct lxc_handler *handler, void* data)
 	NOTICE("Exec'ing \"%s\"", arg->argv[0]);
 
 	execvp(arg->argv[0], arg->argv);
+	/*执行容器给定的命令出错，报错*/
 	SYSERROR("Failed to exec \"%s\"", arg->argv[0]);
 	return 0;
 }

@@ -290,6 +290,7 @@ struct lxc_conf {
 	struct {
 		char *fstab;
 		int auto_mounts;
+		/*待挂载的信息列表*/
 		struct lxc_list mount_list;
 	};
 

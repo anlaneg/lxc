@@ -2317,6 +2317,7 @@ on_error:
 	return ret;
 }
 
+/*通过lxc.mount.entry完成一个挂载项的配置*/
 static int set_config_mount(const char *key, const char *value,
 			    struct lxc_conf *lxc_conf, void *data)
 {
@@ -2324,8 +2325,10 @@ static int set_config_mount(const char *key, const char *value,
 	struct lxc_list *mntlist;
 
 	if (lxc_config_value_empty(value))
+	    /*清空所有mount list*/
 		return lxc_clear_mount_entries(lxc_conf);
 
+	/*向mount list上添加一个成员*/
 	mntlist = malloc(sizeof(*mntlist));
 	if (!mntlist)
 		return -1;
