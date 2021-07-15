@@ -9,20 +9,22 @@
 
 #include "compiler.h"
 
-enum {
-	LXC_NS_USER,
-	LXC_NS_MNT,
-	LXC_NS_PID,
-	LXC_NS_UTS,
-	LXC_NS_IPC,
-	LXC_NS_NET,
-	LXC_NS_CGROUP,
-	LXC_NS_TIME,
-	LXC_NS_MAX
-};
+typedef enum lxc_namespace_t {
+	LXC_NS_USER	= 0,
+	LXC_NS_MNT	= 1,
+	LXC_NS_PID	= 2,
+	LXC_NS_UTS	= 3,
+	LXC_NS_IPC	= 4,
+	LXC_NS_NET	= 5,
+	LXC_NS_CGROUP	= 6,
+	LXC_NS_TIME	= 7,
+	LXC_NS_MAX	= 8
+} lxc_namespace_t;
 
 __hidden extern const struct ns_info {
-	const char *proc_name;//各namespace模块在proc文件中名称
+#define MAX_NS_PROC_NAME 6
+	const char proc_name[MAX_NS_PROC_NAME + 1];//各namespace模块在proc文件中名称
+	const char *proc_path;
 	int clone_flag;//clone此namespace时需要指定的flag
 	const char *flag_name;//flags的名称
 	const char *env_name;//对应的环境变量名称

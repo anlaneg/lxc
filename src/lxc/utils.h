@@ -6,16 +6,13 @@
 /* Properly support loop devices on 32bit systems. */
 #define _FILE_OFFSET_BITS 64
 
-#ifndef MAX_GRBUF_SIZE
-#define MAX_GRBUF_SIZE 65536
-#endif
-
 #include <errno.h>
 #include <linux/loop.h>
 #include <linux/types.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/vfs.h>
@@ -143,13 +140,11 @@ __hidden extern bool is_shared_mountpoint(const char *path);
 __hidden extern int detect_shared_rootfs(void);
 __hidden extern bool detect_ramfs_rootfs(void);
 __hidden extern char *on_path(const char *cmd, const char *rootfs);
-__hidden extern bool cgns_supported(void);
 __hidden extern char *choose_init(const char *rootfs);
 __hidden extern bool switch_to_ns(pid_t pid, const char *ns);
 __hidden extern char *get_template_path(const char *t);
 __hidden extern int safe_mount(const char *src, const char *dest, const char *fstype,
 			       unsigned long flags, const void *data, const char *rootfs);
-__hidden extern int lxc_mount_proc_if_needed(const char *rootfs);
 __hidden extern int open_devnull(void);
 __hidden extern int set_stdfds(int fd);
 __hidden extern int null_stdfds(void);
@@ -162,7 +157,8 @@ __hidden extern bool task_blocks_signal(pid_t pid, int signal);
  * If LXC_INVALID_{G,U}ID is passed then the set{g,u}id() will not be called.
  */
 __hidden extern bool lxc_switch_uid_gid(uid_t uid, gid_t gid);
-__hidden extern bool lxc_setgroups(int size, gid_t list[]);
+__hidden extern bool lxc_setgroups(gid_t list[], size_t size);
+__hidden extern bool lxc_drop_groups(void);
 
 /* Find an unused loop device and associate it with source. */
 __hidden extern int lxc_prepare_loop_dev(const char *source, char *loop_dev, int flags);
@@ -228,7 +224,6 @@ __hidden extern uint64_t lxc_find_next_power2(uint64_t n);
 
 /* Set a signal the child process will receive after the parent has died. */
 __hidden extern int lxc_set_death_signal(int signal, pid_t parent, int parent_status_fd);
-__hidden extern int fd_cloexec(int fd, bool cloexec);
 __hidden extern int lxc_rm_rf(const char *dirname);
 __hidden extern bool lxc_can_use_pidfd(int pidfd);
 
@@ -250,5 +245,56 @@ __hidden extern int safe_mount_beneath(const char *beneath, const char *src, con
 				       const char *fstype, unsigned int flags, const void *data);
 __hidden extern int safe_mount_beneath_at(int beneat_fd, const char *src, const char *dst,
 					  const char *fstype, unsigned int flags, const void *data);
+__hidden __lxc_unused int print_r(int fd, const char *path);
+
+static inline int copy_struct_from_client(__u32 server_size, void *dst,
+					  __u32 client_size, const void *src)
+{
+	__u32 size = min(server_size, client_size);
+	__u32 rest = min(server_size, client_size) - size;
+
+	/* Deal with trailing bytes. */
+	if (client_size < server_size) {
+		memset(dst + size, 0, rest);
+	} else if (client_size > server_size) {
+		/* TODO: Actually come up with a nice way to test for 0. */
+		return 0;
+	}
+
+	memcpy(dst, src, size);
+	return 0;
+}
+
+static inline __u32 copy_struct_to_client(__u32 client_size, void *dst,
+					  __u32 server_size, const void *src)
+{
+	__u32 size = min(server_size, client_size);
+	memcpy(dst, src, size);
+	return size;
+}
+
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+static inline int is_in_comm(const char *s)
+{
+	__do_free char *buf = NULL;
+	__do_free char *comm = NULL;
+	size_t buf_size;
+
+	buf = file_to_buf("/proc/self/comm", &buf_size);
+	if (!buf)
+		return -1;
+
+	if (buf_size == 0)
+		return -1;
+
+	comm = malloc(buf_size + 1);
+	if (!comm)
+		return -1;
+	memcpy(comm, buf, buf_size);
+	comm[buf_size] = '\0';
+
+	return strstr(comm, s) != NULL;
+}
+#endif /* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
 
 #endif /* __LXC_UTILS_H */

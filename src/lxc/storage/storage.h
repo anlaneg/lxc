@@ -15,6 +15,7 @@
 #endif
 
 #include "compiler.h"
+#include "conf.h"
 
 #ifndef MS_DIRSYNC
 #define MS_DIRSYNC 128
@@ -92,6 +93,7 @@ struct lxc_storage {
 	/* index for the connected nbd device. */
 	int nbd_idx;
 	int flags;
+	struct lxc_rootfs *rootfs;
 };
 
 /**

@@ -21,8 +21,15 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "compiler.h"
+#include "config.h"
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
+#endif
+
+#ifndef MAX_GRBUF_SIZE
+#define MAX_GRBUF_SIZE 2097152
 #endif
 
 #define INT64_FMT "%" PRId64
@@ -33,28 +40,168 @@
 #endif
 
 /* capabilities */
-#ifndef CAP_SYS_ADMIN
-#define CAP_SYS_ADMIN 21
+#ifndef CAP_CHOWN
+#define CAP_CHOWN            	0
 #endif
 
-#ifndef CAP_SETFCAP
-#define CAP_SETFCAP 31
+#ifndef CAP_DAC_OVERRIDE
+#define CAP_DAC_OVERRIDE     	1
 #endif
 
-#ifndef CAP_MAC_OVERRIDE
-#define CAP_MAC_OVERRIDE 32
+#ifndef CAP_DAC_READ_SEARCH
+#define CAP_DAC_READ_SEARCH  	2
 #endif
 
-#ifndef CAP_MAC_ADMIN
-#define CAP_MAC_ADMIN 33
+#ifndef CAP_FOWNER
+#define CAP_FOWNER           	3
 #endif
 
-#ifndef CAP_SETUID
-#define CAP_SETUID 7
+#ifndef CAP_FSETID
+#define CAP_FSETID           	4
+#endif
+
+#ifndef CAP_KILL
+#define CAP_KILL             	5
 #endif
 
 #ifndef CAP_SETGID
-#define CAP_SETGID 6
+#define CAP_SETGID           	6
+#endif
+
+#ifndef CAP_SETUID
+#define CAP_SETUID           	7
+#endif
+
+#ifndef CAP_SETPCAP
+#define CAP_SETPCAP          	8
+#endif
+
+#ifndef CAP_LINUX_IMMUTABLE
+#define CAP_LINUX_IMMUTABLE  	9
+#endif
+
+#ifndef CAP_NET_BIND_SERVICE
+#define CAP_NET_BIND_SERVICE 	10
+#endif
+
+#ifndef CAP_NET_BROADCAST
+#define CAP_NET_BROADCAST    	11
+#endif
+
+#ifndef CAP_NET_ADMIN
+#define CAP_NET_ADMIN        	12
+#endif
+
+#ifndef CAP_NET_RAW
+#define CAP_NET_RAW          	13
+#endif
+
+#ifndef CAP_IPC_LOCK
+#define CAP_IPC_LOCK         	14
+#endif
+
+#ifndef CAP_IPC_OWNER
+#define CAP_IPC_OWNER        	15
+#endif
+
+#ifndef CAP_SYS_MODULE
+#define CAP_SYS_MODULE       	16
+#endif
+
+#ifndef CAP_SYS_RAWIO
+#define CAP_SYS_RAWIO        	17
+#endif
+
+#ifndef CAP_SYS_CHROOT
+#define CAP_SYS_CHROOT       	18
+#endif
+
+#ifndef CAP_SYS_PTRACE
+#define CAP_SYS_PTRACE       	19
+#endif
+
+#ifndef CAP_SYS_PACCT
+#define CAP_SYS_PACCT        	20
+#endif
+
+#ifndef CAP_SYS_ADMIN
+#define CAP_SYS_ADMIN        	21
+#endif
+
+#ifndef CAP_SYS_BOOT
+#define CAP_SYS_BOOT         	22
+#endif
+
+#ifndef CAP_SYS_NICE
+#define CAP_SYS_NICE         	23
+#endif
+
+#ifndef CAP_SYS_RESOURCE
+#define CAP_SYS_RESOURCE     	24
+#endif
+
+#ifndef CAP_SYS_TIME
+#define CAP_SYS_TIME         	25
+#endif
+
+#ifndef CAP_SYS_TTY_CONFIG
+#define CAP_SYS_TTY_CONFIG   	26
+#endif
+
+#ifndef CAP_MKNOD
+#define CAP_MKNOD            	27
+#endif
+
+#ifndef CAP_LEASE
+#define CAP_LEASE            	28
+#endif
+
+#ifndef CAP_AUDIT_WRITE
+#define CAP_AUDIT_WRITE      	29
+#endif
+
+#ifndef CAP_AUDIT_CONTROL
+#define CAP_AUDIT_CONTROL    	30
+#endif
+
+#ifndef CAP_SETFCAP
+#define CAP_SETFCAP	     	31
+#endif
+
+#ifndef CAP_MAC_OVERRIDE
+#define CAP_MAC_OVERRIDE     	32
+#endif
+
+#ifndef CAP_MAC_ADMIN
+#define CAP_MAC_ADMIN        	33
+#endif
+
+#ifndef CAP_SYSLOG
+#define CAP_SYSLOG           	34
+#endif
+
+#ifndef CAP_WAKE_ALARM
+#define CAP_WAKE_ALARM       	35
+#endif
+
+#ifndef CAP_BLOCK_SUSPEND
+#define CAP_BLOCK_SUSPEND    	36
+#endif
+
+#ifndef CAP_AUDIT_READ
+#define CAP_AUDIT_READ		37
+#endif
+
+#ifndef CAP_PERFMON
+#define CAP_PERFMON		38
+#endif
+
+#ifndef CAP_BPF
+#define CAP_BPF			39
+#endif
+
+#ifndef CAP_CHECKPOINT_RESTORE
+#define CAP_CHECKPOINT_RESTORE	40
 #endif
 
 /* prctl */
@@ -149,8 +296,29 @@
  *                +
  * \0           =    1
  */
+#define LXC_PROC_PID_LEN \
+	(6 + INTTYPE_TO_STRLEN(pid_t) + 1)
+
+/* /proc/       =    6
+ *                +
+ * <pid-as-str> =   INTTYPE_TO_STRLEN(pid_t)
+ *                +
+ * /fd/         =    4
+ *                +
+ * <fd-as-str>  =   INTTYPE_TO_STRLEN(int)
+ *                +
+ * \0           =    1
+ */
 #define LXC_PROC_PID_FD_LEN \
 	(6 + INTTYPE_TO_STRLEN(pid_t) + 4 + INTTYPE_TO_STRLEN(int) + 1)
+
+/* /proc/self/fd/ =    14
+ *                   +
+ * <fd-as-str>    =    INTTYPE_TO_STRLEN(int)
+ *                   +
+ * \0           =      1
+ */
+#define LXC_PROC_SELF_FD_LEN (14 + INTTYPE_TO_STRLEN(int) + 1)
 
 /* /proc/        = 6
  *               +
@@ -168,11 +336,31 @@
  *               +
  * /attr/        = 6
  *               +
+ * /apparmor/    = 10
+ *               +
  * /current      = 8
  *               +
  * \0            = 1
  */
-#define LXC_LSMATTRLEN (6 + INTTYPE_TO_STRLEN(pid_t) + 6 + 8 + 1)
+#define LXC_LSMATTRLEN (6 + INTTYPE_TO_STRLEN(pid_t) + 6 + 10 + 8 + 1)
+
+/* MAX_NS_PROC_NAME = MAX_NS_PROC_NAME
+ *                  +
+ * :                = 1
+ *                  +
+ * /proc/           = 6
+ *                  +
+ * <pid-as_str>     = INTTYPE_TO_STRLEN(pid_t)
+ *                  +
+ * /fd/             = 4
+ *                  +
+ * <int-as-str>     = INTTYPE_TO_STRLEN(int)
+ *                  +
+ * \0               = 1
+ */
+#define LXC_EXPOSE_NAMESPACE_LEN                                   \
+	(MAX_NS_PROC_NAME + 1 + 6 + INTTYPE_TO_STRLEN(pid_t) + 4 + \
+	 INTTYPE_TO_STRLEN(int) + 1)
 
 #define LXC_CMD_DATA_MAX (PATH_MAX * 2)
 
@@ -220,12 +408,6 @@ extern int __build_bug_on_failed;
 			__build_bug_on_failed = 1;           \
 	} while (0)
 #endif
-
-//按__separratorrs分隔splitme，并采用__iterato进行遍历
-#define lxc_iterate_parts(__iterator, __splitme, __separators)                  \
-	for (char *__p = NULL, *__it = strtok_r(__splitme, __separators, &__p); \
-	     (__iterator = __it);                                               \
-	     __iterator = __it = strtok_r(NULL, __separators, &__p))
 
 #define prctl_arg(x) ((unsigned long)x)
 
@@ -446,7 +628,8 @@ enum {
 #define PTR_TO_PID(p) ((pid_t)((intptr_t)(p)))
 #define PID_TO_PTR(u) ((void *)((intptr_t)(u)))
 
-#define PTR_TO_UINT64(p) ((uint64_t)((intptr_t)(p)))
+#define PTR_TO_UINT64(p) ((uint64_t)((uintptr_t)(p)))
+#define PTR_TO_U64(p) ((__u64)((uintptr_t)(p)))
 
 #define UINT_TO_PTR(u) ((void *) ((uintptr_t) (u)))
 #define PTR_TO_USHORT(p) ((unsigned short)((uintptr_t)(p)))
@@ -481,16 +664,10 @@ enum {
 		__internal_ret__;                             \
 	})
 
-#define ret_errno(__errno__)         \
-	({                           \
-		errno = (__errno__); \
-		-(__errno__);        \
-	})
-
-#define free_move_ptr(a, b)          \
-	({                           \
-		free(a);             \
-		(a) = move_ptr((b)); \
+#define ret_errno(__errno__)             \
+	({                               \
+		errno = labs(__errno__); \
+		-errno;                  \
 	})
 
 /* Container's specific file/directory names */
@@ -511,6 +688,63 @@ enum {
 	#else
 		#define TIOCGPTPEER _IO('T', 0x41)
 	#endif
+#endif
+
+#define ENOCGROUP2 ENOMEDIUM
+
+#define MAX_FILENO ~0U
+
+#define swap(a, b)                     \
+	do {                           \
+		typeof(a) __tmp = (a); \
+		(a) = (b);             \
+		(b) = __tmp;           \
+	} while (0)
+
+#define min(x, y)                              \
+	({                                     \
+		typeof(x) _min1 = (x);         \
+		typeof(y) _min2 = (y);         \
+		(void)(&_min1 == &_min2);      \
+		_min1 < _min2 ? _min1 : _min2; \
+	})
+
+#define BUILD_BUG_ON_ZERO(e) ((int)(sizeof(struct { int:(-!!(e)); })))
+
+/*
+ * Compile time versions of __arch_hweightN()
+ */
+#define __const_hweight8(w)		\
+	((unsigned int)			\
+	 ((!!((w) & (1ULL << 0))) +	\
+	  (!!((w) & (1ULL << 1))) +	\
+	  (!!((w) & (1ULL << 2))) +	\
+	  (!!((w) & (1ULL << 3))) +	\
+	  (!!((w) & (1ULL << 4))) +	\
+	  (!!((w) & (1ULL << 5))) +	\
+	  (!!((w) & (1ULL << 6))) +	\
+	  (!!((w) & (1ULL << 7)))))
+
+#define __const_hweight16(w) (__const_hweight8(w)  + __const_hweight8((w)  >> 8 ))
+#define __const_hweight32(w) (__const_hweight16(w) + __const_hweight16((w) >> 16))
+#define __const_hweight64(w) (__const_hweight32(w) + __const_hweight32((w) >> 32))
+
+#define hweight8(w) __const_hweight8(w)
+#define hweight16(w) __const_hweight16(w)
+#define hweight32(w) __const_hweight32(w)
+#define hweight64(w) __const_hweight64(w)
+
+#ifndef HAVE___ALIGNED_U64
+#define __aligned_u64 __u64 __attribute__((aligned(8)))
+#endif
+
+#define BITS_PER_BYTE 8
+#define BITS_PER_TYPE(type) (sizeof(type) * 8)
+#define LAST_BIT_PER_TYPE(type) (BITS_PER_TYPE(type) - 1)
+
+#ifndef HAVE_SYS_PERSONALITY_H
+#define PER_LINUX	0x0000
+#define PER_LINUX32	0x0008
 #endif
 
 #endif /* __LXC_MACRO_H */

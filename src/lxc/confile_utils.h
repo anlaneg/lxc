@@ -9,24 +9,22 @@
 #include "conf.h"
 #include "confile_utils.h"
 
-#define strprint(str, inlen, ...)                                       \
-	do {                                                            \
-		if (str)                                                \
-			len = snprintf(str, inlen, ##__VA_ARGS__);      \
-		else                                                    \
-			len = snprintf((char *){""}, 0, ##__VA_ARGS__); \
-		if (len < 0) {                                          \
-			SYSERROR("failed to create string");            \
-			return -1;                                      \
-		};                                                      \
-		fulllen += len;                                         \
-		if (inlen > 0) {                                        \
-			if (str)                                        \
-				str += len;                             \
-			inlen -= len;                                   \
-			if (inlen < 0)                                  \
-				inlen = 0;                              \
-		}                                                       \
+#define strprint(str, inlen, ...)                                                     \
+	do {                                                                          \
+		if (str)                                                              \
+			len = snprintf(str, inlen, ##__VA_ARGS__);                    \
+		else                                                                  \
+			len = snprintf((char *){""}, 0, ##__VA_ARGS__);               \
+		if (len < 0)                                                          \
+			return log_error_errno(-EIO, EIO, "failed to create string"); \
+		fulllen += len;                                                       \
+		if (inlen > 0) {                                                      \
+			if (str)                                                      \
+				str += len;                                           \
+			inlen -= len;                                                 \
+			if (inlen < 0)                                                \
+				inlen = 0;                                            \
+		}                                                                     \
 	} while (0);
 
 __hidden extern int parse_idmaps(const char *idmap, char *type, unsigned long *nsid,
@@ -39,6 +37,7 @@ __hidden extern struct lxc_netdev *lxc_get_netdev_by_idx(struct lxc_conf *conf, 
 __hidden extern void lxc_log_configured_netdevs(const struct lxc_conf *conf);
 __hidden extern bool lxc_remove_nic_by_idx(struct lxc_conf *conf, unsigned int idx);
 __hidden extern void lxc_free_networks(struct lxc_list *networks);
+__hidden extern void lxc_clear_netdev(struct lxc_netdev *netdev);
 __hidden extern int lxc_veth_mode_to_flag(int *mode, const char *value);
 __hidden extern char *lxc_veth_flag_to_mode(int mode);
 __hidden extern int lxc_macvlan_mode_to_flag(int *mode, const char *value);

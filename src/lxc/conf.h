@@ -15,12 +15,20 @@
 #include <sys/types.h>
 #include <sys/vfs.h>
 
+#include "attach_options.h"
+#include "caps.h"
 #include "compiler.h"
 #include "config.h"
 #include "list.h"
 #include "lxcseccomp.h"
+#include "memory_utils.h"
+#include "namespace.h"
 #include "ringbuf.h"
 #include "start.h"
+#include "state.h"
+#include "storage/storage.h"
+#include "string_utils.h"
+#include "syscall_wrappers.h"
 #include "terminal.h"
 
 #if HAVE_SYS_RESOURCE_H
@@ -30,6 +38,8 @@
 #if HAVE_SCMP_FILTER_CTX
 typedef void * scmp_filter_ctx;
 #endif
+
+typedef signed long personality_t;
 
 /* worth moving to configure.ac? */
 #define subuidfile "/etc/subuid"
@@ -61,12 +71,23 @@ struct lxc_cgroup {
 			char *controllers;
 			char *dir;
 			char *monitor_dir;
+			char *monitor_pivot_dir;
 			char *container_dir;
 			char *namespace_dir;
 			bool relative;
 		};
 	};
 };
+
+static void free_lxc_cgroup(struct lxc_cgroup *ptr)
+{
+	if (ptr) {
+		free(ptr->subsystem);
+		free(ptr->value);
+		free_disarm(ptr);
+	}
+}
+define_cleanup_function(struct lxc_cgroup *, free_lxc_cgroup);
 
 #if !HAVE_SYS_RESOURCE_H
 #define RLIM_INFINITY ((unsigned long)-1)
@@ -86,6 +107,15 @@ struct lxc_limit {
 	struct rlimit limit;
 };
 
+static void free_lxc_limit(struct lxc_limit *ptr)
+{
+	if (ptr) {
+		free_disarm(ptr->resource);
+		free_disarm(ptr);
+	}
+}
+define_cleanup_function(struct lxc_limit *, free_lxc_limit);
+
 enum idtype {
 	ID_TYPE_UID,
 	ID_TYPE_GID
@@ -101,6 +131,16 @@ struct lxc_sysctl {
 	char *value;
 };
 
+static void free_lxc_sysctl(struct lxc_sysctl *ptr)
+{
+	if (ptr) {
+		free(ptr->key);
+		free(ptr->value);
+		free_disarm(ptr);
+	}
+}
+define_cleanup_function(struct lxc_sysctl *, free_lxc_sysctl);
+
 /*
  * Defines a structure to configure proc filesystem at runtime.
  * @filename : the proc filesystem will be configured without the "lxc.proc" prefix
@@ -110,6 +150,16 @@ struct lxc_proc {
 	char *filename;
 	char *value;
 };
+
+static void free_lxc_proc(struct lxc_proc *ptr)
+{
+	if (ptr) {
+		free(ptr->filename);
+		free(ptr->value);
+		free_disarm(ptr);
+	}
+}
+define_cleanup_function(struct lxc_proc *, free_lxc_proc);
 
 /*
  * id_map is an id map entry.  Form in confile is:
@@ -137,32 +187,65 @@ struct lxc_tty_info {
 	struct lxc_terminal_info *tty;
 };
 
+typedef enum lxc_mount_options_t {
+	LXC_MOUNT_CREATE_DIR	= 0,
+	LXC_MOUNT_CREATE_FILE	= 1,
+	LXC_MOUNT_OPTIONAL	= 2,
+	LXC_MOUNT_RELATIVE	= 3,
+	LXC_MOUNT_IDMAP		= 4,
+	LXC_MOUNT_MAX		= 5,
+} lxc_mount_options_t;
+
+__hidden extern const char *lxc_mount_options_info[LXC_MOUNT_MAX];
+
+struct lxc_mount_options {
+	unsigned int create_dir : 1;
+	unsigned int create_file : 1;
+	unsigned int optional : 1;
+	unsigned int relative : 1;
+	unsigned int recursive : 1;
+	unsigned int bind : 1;
+	char userns_path[PATH_MAX];
+	unsigned long mnt_flags;
+	unsigned long prop_flags;
+	char *data;
+	struct lxc_mount_attr attr;
+};
+
 /* Defines a structure to store the rootfs location, the
  * optionals pivot_root, rootfs mount paths
  * @path         : the rootfs source (directory or device)
  * @mount        : where it is mounted
+ * @buf		 : static buffer to construct paths
  * @bev_type     : optional backing store type
  * @options      : mount options
- * @mountflags   : the portion of @options that are flags
- * @data         : the portion of @options that are not flags
  * @managed      : whether it is managed by LXC
- * @mntpt_fd	 : fd for @mount
- * @dev_mntpt_fd : fd for /dev of the container
+ * @dfd_mnt	 : fd for @mount
+ * @dfd_dev : fd for /dev of the container
  */
 struct lxc_rootfs {
-	int mntpt_fd;
-	int dev_mntpt_fd;
+	int dfd_host;
+
 	//rootfs对应的路径
 	char *path;
+	int fd_path_pin;
+	int dfd_idmapped;
+
+	int dfd_mnt;
 	//指定存储设备的挂载地址
 	char *mount;
+
+	int dfd_dev;
+
+	char buf[PATH_MAX];
 	//存储设备类型,例如lvm,dir等
 	char *bdev_type;
 	char *options;
 	//存储设备的挂载选项
 	unsigned long mountflags;
-	char *data;
 	bool managed;
+	struct lxc_mount_options mnt_opts;
+	struct lxc_storage *storage;
 };
 
 /*
@@ -193,7 +276,7 @@ enum {
 	LXC_AUTO_CGROUP_NOSPEC        = 0x0B0, /* /sys/fs/cgroup (partial mount, r/w or mixed, depending on caps) */
 	LXC_AUTO_CGROUP_FULL_NOSPEC   = 0x0E0, /* /sys/fs/cgroup (full mount, r/w or mixed, depending on caps) */
 	LXC_AUTO_CGROUP_FORCE         = 0x100, /* mount cgroups even when cgroup namespaces are supported */
-	LXC_AUTO_CGROUP_MASK          = 0x1F0, /* all known cgroup options, doe not contain LXC_AUTO_CGROUP_FORCE */
+	LXC_AUTO_CGROUP_MASK          = 0x1F0, /* all known cgroup options */
 
 	LXC_AUTO_SHMOUNTS             = 0x200, /* shared mount point */
 	LXC_AUTO_SHMOUNTS_MASK        = 0x200, /* shared mount point mask */
@@ -222,11 +305,10 @@ struct lxc_state_client {
 	lxc_state_t states[MAX_STATE];
 };
 
-enum {
-	LXC_BPF_DEVICE_CGROUP_LOCAL_RULE = -1,
-	LXC_BPF_DEVICE_CGROUP_ALLOWLIST  =  0,
-	LXC_BPF_DEVICE_CGROUP_DENYLIST  =  1,
-};
+typedef enum lxc_bpf_devices_rule_t {
+	LXC_BPF_DEVICE_CGROUP_ALLOWLIST		= 0,
+	LXC_BPF_DEVICE_CGROUP_DENYLIST		= 1,
+} lxc_bpf_devices_rule_t;
 
 struct device_item {
 	char type;
@@ -234,12 +316,11 @@ struct device_item {
 	int minor;
 	char access[4];
 	int allow;
-	/*
-	 * LXC_BPF_DEVICE_CGROUP_LOCAL_RULE -> no global rule
-	 * LXC_BPF_DEVICE_CGROUP_ALLOWLIST  -> allowlist (deny all)
-	 * LXC_BPF_DEVICE_CGROUP_DENYLIST   -> denylist (allow all)
-	 */
-	int global_rule;
+};
+
+struct bpf_devices {
+	lxc_bpf_devices_rule_t list_type;
+	struct lxc_list device_item;
 };
 
 struct timens_offsets {
@@ -258,15 +339,13 @@ struct lxc_conf {
 	bool is_execute;
 	int reboot;
 	/*由lxc.arch配置项产生*/
-	signed long personality;
+	personality_t personality;
 	struct utsname *utsname;
 
 	struct {
 		struct lxc_list cgroup;
 		struct lxc_list cgroup2;
-		struct bpf_program *cgroup2_devices;
-		/* This should be reimplemented as a hashmap. */
-		struct lxc_list devices;
+		struct bpf_devices bpf_devices;
 	};
 
 	struct {
@@ -331,7 +410,7 @@ struct lxc_conf {
 	char *lsm_se_context;
 	char *lsm_se_keyring_context;
 	bool keyring_disable_session;
-	bool tmp_umount_proc;
+	bool transient_procfs_mnt;
 	struct lxc_seccomp seccomp;
 	int maincmd_fd;//cmd对应的socket fd
 	unsigned int autodev;  /* if 1, mount and fill a /dev at start */
@@ -381,10 +460,12 @@ struct lxc_conf {
 	/* init command */
 	char *init_cmd;/*容器的起始命令*/
 
-	/* if running in a new user namespace, the UID/GID that init and COMMAND
-	 * should run under when using lxc-execute */
+	/* The uid to use for the container. */
 	uid_t init_uid;
+	/* The gid to use for the container. */
 	gid_t init_gid;
+	/* The groups to use for the container. */
+	lxc_groups_t init_groups;
 
 	/* indicator if the container will be destroyed on shutdown */
 	unsigned int ephemeral;
@@ -438,16 +519,17 @@ struct lxc_conf {
 __hidden extern int write_id_mapping(enum idtype idtype, pid_t pid, const char *buf, size_t buf_size)
     __access_r(3, 4);
 
-#ifdef HAVE_TLS
 extern thread_local struct lxc_conf *current_config;
-#else
-extern struct lxc_conf *current_config;
-#endif
 
 __hidden extern int run_lxc_hooks(const char *name, char *hook, struct lxc_conf *conf, char *argv[]);
 __hidden extern struct lxc_conf *lxc_conf_init(void);
 __hidden extern void lxc_conf_free(struct lxc_conf *conf);
-__hidden extern int pin_rootfs(const char *rootfs);
+__hidden extern int lxc_storage_prepare(struct lxc_conf *conf);
+__hidden extern int lxc_rootfs_prepare(struct lxc_conf *conf, bool userns);
+__hidden extern void lxc_storage_put(struct lxc_conf *conf);
+__hidden extern int lxc_rootfs_init(struct lxc_conf *conf, bool userns);
+__hidden extern int lxc_rootfs_prepare_parent(struct lxc_handler *handler);
+__hidden extern int lxc_idmapped_mounts_parent(struct lxc_handler *handler);
 __hidden extern int lxc_map_ids(struct lxc_list *idmap, pid_t pid);
 __hidden extern int lxc_create_tty(const char *name, struct lxc_conf *conf);
 __hidden extern void lxc_delete_tty(struct lxc_tty_info *ttys);
@@ -475,19 +557,29 @@ __hidden extern int userns_exec_1(const struct lxc_conf *conf, int (*fn)(void *)
 				  const char *fn_name);
 __hidden extern int userns_exec_full(struct lxc_conf *conf, int (*fn)(void *), void *data,
 				     const char *fn_name);
-__hidden extern int parse_mntopts(const char *mntopts, unsigned long *mntflags, char **mntdata);
+__hidden extern int parse_mntopts_legacy(const char *mntopts, unsigned long *mntflags, char **mntdata);
 __hidden extern int parse_propagationopts(const char *mntopts, unsigned long *pflags);
+__hidden extern int parse_lxc_mount_attrs(struct lxc_mount_options *opts, char *mnt_opts);
 __hidden extern void tmp_proc_unmount(struct lxc_conf *lxc_conf);
-__hidden extern void turn_into_dependent_mounts(void);
 __hidden extern void suggest_default_idmap(void);
 __hidden extern FILE *make_anonymous_mount_file(struct lxc_list *mount, bool include_nesting_helpers);
 __hidden extern struct lxc_list *sort_cgroup_settings(struct lxc_list *cgroup_settings);
-__hidden extern unsigned long add_required_remount_flags(const char *s, const char *d,
-							 unsigned long flags);
 __hidden extern int run_script(const char *name, const char *section, const char *script, ...);
 __hidden extern int run_script_argv(const char *name, unsigned int hook_version, const char *section,
 				    const char *script, const char *hookname, char **argsin);
 __hidden extern int in_caplist(int cap, struct lxc_list *caps);
+
+static inline bool lxc_wants_cap(int cap, struct lxc_conf *conf)
+{
+	if (lxc_caps_last_cap() < cap)
+		return false;
+
+	if (!lxc_list_empty(&conf->keepcaps))
+		return in_caplist(cap, &conf->keepcaps);
+
+	return !in_caplist(cap, &conf->caps);
+}
+
 __hidden extern int setup_sysctl_parameters(struct lxc_list *sysctls);
 __hidden extern int lxc_clear_sysctls(struct lxc_conf *c, const char *key);
 __hidden extern int setup_proc_filesystem(struct lxc_list *procs, pid_t pid);
@@ -502,6 +594,65 @@ __hidden extern int userns_exec_mapped_root(const char *path, int path_fd,
 static inline int chown_mapped_root(const char *path, const struct lxc_conf *conf)
 {
 	return userns_exec_mapped_root(path, -EBADF, conf);
+}
+
+__hidden extern int lxc_sync_fds_parent(struct lxc_handler *handler);
+__hidden extern int lxc_sync_fds_child(struct lxc_handler *handler);
+
+static inline const char *get_rootfs_mnt(const struct lxc_rootfs *rootfs)
+{
+	static const char *s = "/";
+
+	return !is_empty_string(rootfs->path) ? rootfs->mount : s;
+}
+
+static inline void put_lxc_mount_options(struct lxc_mount_options *mnt_opts)
+{
+	mnt_opts->create_dir = 0;
+	mnt_opts->create_file = 0;
+	mnt_opts->optional = 0;
+	mnt_opts->relative = 0;
+	mnt_opts->userns_path[0] = '\0';
+	mnt_opts->mnt_flags = 0;
+	mnt_opts->prop_flags = 0;
+
+	free_disarm(mnt_opts->data);
+}
+
+static inline void put_lxc_rootfs(struct lxc_rootfs *rootfs, bool unpin)
+{
+	if (rootfs) {
+		close_prot_errno_disarm(rootfs->dfd_host);
+		close_prot_errno_disarm(rootfs->dfd_mnt);
+		close_prot_errno_disarm(rootfs->dfd_dev);
+		if (unpin)
+			close_prot_errno_disarm(rootfs->fd_path_pin);
+		close_prot_errno_disarm(rootfs->dfd_idmapped);
+		put_lxc_mount_options(&rootfs->mnt_opts);
+		storage_put(rootfs->storage);
+		rootfs->storage = NULL;
+	}
+}
+
+static inline void lxc_clear_cgroup2_devices(struct bpf_devices *bpf_devices)
+{
+	struct lxc_list *list = &bpf_devices->device_item;
+	struct lxc_list *it, *next;
+
+	lxc_list_for_each_safe (it, list, next) {
+		lxc_list_del(it);
+		free(it);
+	}
+
+	lxc_list_init(&bpf_devices->device_item);
+}
+
+static inline int lxc_personality(personality_t persona)
+{
+	if (persona < 0)
+		return ret_errno(EINVAL);
+
+	return personality(persona);
 }
 
 #endif /* __LXC_CONF_H */

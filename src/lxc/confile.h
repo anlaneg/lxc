@@ -32,11 +32,15 @@ typedef int (*config_get_cb)(const char *key, char *value, int inlen,
 typedef int (*config_clr_cb)(const char *key, struct lxc_conf *conf,
 			     void *data);
 
+#define LXC_CONFIG_MEMBERS \
+	char *name; /*配置名称*/       \
+	bool strict;       \
+	config_set_cb set; /*具体配置的set函数*/\
+	config_get_cb get; /*具体配置的get函数*/\
+	config_clr_cb clr/*具体配置的clear函数*/
+
 struct lxc_config_t {
-	char *name;//配置名称
-	config_set_cb set;//具体配置的set函数
-	config_get_cb get;//具体配置的get函数
-	config_clr_cb clr;//具体配置的clear函数
+	LXC_CONFIG_MEMBERS;
 };
 
 struct new_config_item {
@@ -45,6 +49,9 @@ struct new_config_item {
 };
 
 /* Get the jump table entry for the given configuration key. */
+__hidden extern struct lxc_config_t *lxc_get_config_exact(const char *key);
+
+/* Get the jump table entry if entry name is a prefix of the given configuration key. */
 __hidden extern struct lxc_config_t *lxc_get_config(const char *key);
 
 /* List all available config items. */
@@ -75,8 +82,12 @@ __hidden extern bool lxc_config_define_load(struct lxc_list *defines, struct lxc
 
 __hidden extern void lxc_config_define_free(struct lxc_list *defines);
 
-/* needed for lxc-attach */
-__hidden extern signed long lxc_config_parse_arch(const char *arch);
+#define LXC_ARCH_UNCHANGED 0xffffffffL
+/*
+ * Parse personality of the container. Returns 0 if personality is valid,
+ * negative errno otherwise.
+ */
+__hidden extern int lxc_config_parse_arch(const char *arch, signed long *persona);
 
 __hidden extern int lxc_fill_elevated_privileges(char *flaglist, int *flags);
 

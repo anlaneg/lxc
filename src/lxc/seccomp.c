@@ -101,9 +101,9 @@ static uint32_t get_v2_default_action(char *line)
 		line++;
 
 	/* After 'allowlist' or 'denylist' comes default behavior. */
-	if (strncmp(line, "kill", 4) == 0) {
+	if (strnequal(line, "kill", 4)) {
 		ret_action = SCMP_ACT_KILL;
-	} else if (strncmp(line, "errno", 5) == 0) {
+	} else if (strnequal(line, "errno", 5)) {
 		int e, ret;
 
 		ret = sscanf(line + 5, "%d", &e);
@@ -113,12 +113,12 @@ static uint32_t get_v2_default_action(char *line)
 		}
 
 		ret_action = SCMP_ACT_ERRNO(e);
-	} else if (strncmp(line, "allow", 5) == 0) {
+	} else if (strnequal(line, "allow", 5)) {
 		ret_action = SCMP_ACT_ALLOW;
-	} else if (strncmp(line, "trap", 4) == 0) {
+	} else if (strnequal(line, "trap", 4)) {
 		ret_action = SCMP_ACT_TRAP;
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
-	} else if (strncmp(line, "notify", 6) == 0) {
+	} else if (strnequal(line, "notify", 6)) {
 		ret_action = SCMP_ACT_NOTIFY;
 #endif
 	} else if (line[0]) {
@@ -171,19 +171,19 @@ struct seccomp_v2_rule {
 
 static enum scmp_compare parse_v2_rule_op(char *s)
 {
-	if (strcmp(s, "SCMP_CMP_NE") == 0 || strcmp(s, "!=") == 0)
+	if (strequal(s, "SCMP_CMP_NE") || strequal(s, "!="))
 		return SCMP_CMP_NE;
-	else if (strcmp(s, "SCMP_CMP_LT") == 0 || strcmp(s, "<") == 0)
+	else if (strequal(s, "SCMP_CMP_LT") || strequal(s, "<"))
 		return SCMP_CMP_LT;
-	else if (strcmp(s, "SCMP_CMP_LE") == 0 || strcmp(s, "<=") == 0)
+	else if (strequal(s, "SCMP_CMP_LE") || strequal(s, "<="))
 		return SCMP_CMP_LE;
-	else if (strcmp(s, "SCMP_CMP_EQ") == 0 || strcmp(s, "==") == 0)
+	else if (strequal(s, "SCMP_CMP_EQ") || strequal(s, "=="))
 		return SCMP_CMP_EQ;
-	else if (strcmp(s, "SCMP_CMP_GE") == 0 || strcmp(s, ">=") == 0)
+	else if (strequal(s, "SCMP_CMP_GE") || strequal(s, ">="))
 		return SCMP_CMP_GE;
-	else if (strcmp(s, "SCMP_CMP_GT") == 0 || strcmp(s, ">") == 0)
+	else if (strequal(s, "SCMP_CMP_GT") || strequal(s, ">"))
 		return SCMP_CMP_GT;
-	else if (strcmp(s, "SCMP_CMP_MASKED_EQ") == 0 || strcmp(s, "&=") == 0)
+	else if (strequal(s, "SCMP_CMP_MASKED_EQ") || strequal(s, "&="))
 		return SCMP_CMP_MASKED_EQ;
 
 	return _SCMP_CMP_MAX;
@@ -326,28 +326,28 @@ static int get_hostarch(void)
 		return -1;
 	}
 
-	if (strcmp(uts.machine, "i686") == 0)
+	if (strequal(uts.machine, "i686"))
 		return lxc_seccomp_arch_i386;
 	/* no x32 kernels */
-	else if (strcmp(uts.machine, "x86_64") == 0)
+	else if (strequal(uts.machine, "x86_64"))
 		return lxc_seccomp_arch_amd64;
-	else if (strncmp(uts.machine, "armv7", 5) == 0)
+	else if (strnequal(uts.machine, "armv7", 5))
 		return lxc_seccomp_arch_arm;
-	else if (strncmp(uts.machine, "aarch64", 7) == 0)
+	else if (strnequal(uts.machine, "aarch64", 7))
 		return lxc_seccomp_arch_arm64;
-	else if (strncmp(uts.machine, "ppc64le", 7) == 0)
+	else if (strnequal(uts.machine, "ppc64le", 7))
 		return lxc_seccomp_arch_ppc64le;
-	else if (strncmp(uts.machine, "ppc64", 5) == 0)
+	else if (strnequal(uts.machine, "ppc64", 5))
 		return lxc_seccomp_arch_ppc64;
-	else if (strncmp(uts.machine, "ppc", 3) == 0)
+	else if (strnequal(uts.machine, "ppc", 3))
 		return lxc_seccomp_arch_ppc;
-	else if (strncmp(uts.machine, "mips64", 6) == 0)
+	else if (strnequal(uts.machine, "mips64", 6))
 		return MIPS_ARCH_N64;
-	else if (strncmp(uts.machine, "mips", 4) == 0)
+	else if (strnequal(uts.machine, "mips", 4))
 		return MIPS_ARCH_O32;
-	else if (strncmp(uts.machine, "s390x", 5) == 0)
+	else if (strnequal(uts.machine, "s390x", 5))
 		return lxc_seccomp_arch_s390x;
-	else if (strncmp(uts.machine, "s390", 4) == 0)
+	else if (strnequal(uts.machine, "s390", 4))
 		return lxc_seccomp_arch_s390;
 	return lxc_seccomp_arch_unknown;
 }
@@ -486,7 +486,14 @@ static scmp_filter_ctx get_new_ctx(enum lxc_hostarch_t n_arch, uint32_t default_
 	return ctx;
 }
 
-static bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
+enum lxc_seccomp_rule_status_t {
+  lxc_seccomp_rule_added = 0,
+  lxc_seccomp_rule_err,
+  lxc_seccomp_rule_undefined_syscall,
+  lxc_seccomp_rule_unsupported_arch,
+};
+
+static enum lxc_seccomp_rule_status_t do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
 				struct seccomp_v2_rule *rule)
 {
 	int i, nr, ret;
@@ -496,7 +503,7 @@ static bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
 	if (arch && ret != 0) {
 		errno = -ret;
 		SYSERROR("Seccomp: rule and context arch do not match (arch %d)", arch);
-		return false;
+		return lxc_seccomp_rule_err;
 	}
 
 	/*get the syscall name*/
@@ -504,31 +511,35 @@ static bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
 	if (p)
 		*p = '\0';
 
-	if (strncmp(line, "reject_force_umount", 19) == 0) {
+	if (strnequal(line, "reject_force_umount", 19)) {
 		ret = seccomp_rule_add_exact(ctx, SCMP_ACT_ERRNO(EACCES),
 					     SCMP_SYS(umount2), 1,
 					     SCMP_A1(SCMP_CMP_MASKED_EQ, MNT_FORCE, MNT_FORCE));
 		if (ret < 0) {
 			errno = -ret;
 			SYSERROR("Failed loading rule to reject force umount");
-			return false;
+			return lxc_seccomp_rule_err;
 		}
 
 		INFO("Set seccomp rule to reject force umounts");
-		return true;
+		return lxc_seccomp_rule_added;
 	}
 
 	nr = seccomp_syscall_resolve_name(line);
 	if (nr == __NR_SCMP_ERROR) {
-		WARN("Failed to resolve syscall \"%s\"", line);
-		WARN("This syscall will NOT be handled by seccomp");
-		return true;
+		INFO("The syscall[%s] is is undefined on host native arch", line);
+		return lxc_seccomp_rule_undefined_syscall;
 	}
 
-	if (nr < 0) {
-		WARN("Got negative return value %d for syscall \"%s\"", nr, line);
-		WARN("This syscall will NOT be handled by seccomp");
-		return true;
+	// The syscall resolves to a pseudo syscall and may be available on compat archs.
+	if (nr < 0 && arch == SCMP_ARCH_NATIVE) {
+		DEBUG("The syscall[%d:%s] is a pseudo syscall and not available on host native arch.", nr, line);
+		return lxc_seccomp_rule_unsupported_arch;
+	}
+
+	if (arch != SCMP_ARCH_NATIVE && seccomp_syscall_resolve_name_arch(arch, line) < 0) {
+		DEBUG("The syscall[%d:%s] is not supported on compat arch[%u]", nr, line, arch);
+		return lxc_seccomp_rule_unsupported_arch;
 	}
 
 	memset(&arg_cmp, 0, sizeof(arg_cmp));
@@ -550,16 +561,20 @@ static bool do_resolve_add_rule(uint32_t arch, char *line, scmp_filter_ctx ctx,
 					      rule->args_value[i].value);
 	}
 
+	INFO("Adding %s rule for syscall[%d:%s] action[%d:%s] arch[%u]",
+			  (arch == SCMP_ARCH_NATIVE) ? "native" : "compat",
+			  nr, line, rule->action, get_action_name(rule->action), arch);
+
 	ret = seccomp_rule_add_exact_array(ctx, rule->action, nr,
 					   rule->args_num, arg_cmp);
 	if (ret < 0) {
 		errno = -ret;
-		SYSERROR("Failed loading rule for %s (nr %d action %d (%s))",
-		         line, nr, rule->action, get_action_name(rule->action));
-		return false;
+		SYSERROR("Failed to add rule for syscall[%d:%s] action[%d:%s] arch[%u]",
+		         nr, line, rule->action, get_action_name(rule->action), arch);
+		return lxc_seccomp_rule_err;
 	}
 
-	return true;
+	return lxc_seccomp_rule_added;
 }
 
 /*
@@ -637,6 +652,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 		if (default_rule_action == -1)
 			default_rule_action = SCMP_ACT_ALLOW;
 	}
+
+	DEBUG("Host native arch is [%u]", seccomp_arch_native());
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.architectures[0] = SCMP_ARCH_NATIVE;
@@ -790,8 +807,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 		INFO("Processing \"%s\"", line);
 		if (line[0] == '[') {
 			/* Read the architecture for next set of rules. */
-			if (strcmp(line, "[x86]") == 0 ||
-			    strcmp(line, "[X86]") == 0) {
+			if (strequal(line, "[x86]") ||
+			    strequal(line, "[X86]")) {
 				if (native_arch != lxc_seccomp_arch_i386 &&
 				    native_arch != lxc_seccomp_arch_amd64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
@@ -799,29 +816,29 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_i386;
-			} else if (strcmp(line, "[x32]") == 0 ||
-				   strcmp(line, "[X32]") == 0) {
+			} else if (strequal(line, "[x32]") ||
+				   strequal(line, "[X32]")) {
 				if (native_arch != lxc_seccomp_arch_amd64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_x32;
-			} else if (strcmp(line, "[X86_64]") == 0 ||
-				   strcmp(line, "[x86_64]") == 0) {
+			} else if (strequal(line, "[X86_64]") ||
+				   strequal(line, "[x86_64]")) {
 				if (native_arch != lxc_seccomp_arch_amd64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_amd64;
-			} else if (strcmp(line, "[all]") == 0 ||
-				   strcmp(line, "[ALL]") == 0) {
+			} else if (strequal(line, "[all]") ||
+				   strequal(line, "[ALL]")) {
 				cur_rule_arch = lxc_seccomp_arch_all;
 			}
 #ifdef SCMP_ARCH_ARM
-			else if (strcmp(line, "[arm]") == 0 ||
-				 strcmp(line, "[ARM]") == 0) {
+			else if (strequal(line, "[arm]") ||
+				 strequal(line, "[ARM]")) {
 				if (native_arch != lxc_seccomp_arch_arm &&
 				    native_arch != lxc_seccomp_arch_arm64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
@@ -832,8 +849,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_AARCH64
-			else if (strcmp(line, "[arm64]") == 0 ||
-				 strcmp(line, "[ARM64]") == 0) {
+			else if (strequal(line, "[arm64]") ||
+				 strequal(line, "[ARM64]")) {
 				if (native_arch != lxc_seccomp_arch_arm64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
@@ -843,8 +860,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_PPC64LE
-			else if (strcmp(line, "[ppc64le]") == 0 ||
-				 strcmp(line, "[PPC64LE]") == 0) {
+			else if (strequal(line, "[ppc64le]") ||
+				 strequal(line, "[PPC64LE]")) {
 				if (native_arch != lxc_seccomp_arch_ppc64le) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
@@ -854,8 +871,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_PPC64
-			else if (strcmp(line, "[ppc64]") == 0 ||
-				 strcmp(line, "[PPC64]") == 0) {
+			else if (strequal(line, "[ppc64]") ||
+				 strequal(line, "[PPC64]")) {
 				if (native_arch != lxc_seccomp_arch_ppc64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
@@ -865,8 +882,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_PPC
-			else if (strcmp(line, "[ppc]") == 0 ||
-				 strcmp(line, "[PPC]") == 0) {
+			else if (strequal(line, "[ppc]") ||
+				 strequal(line, "[PPC]")) {
 				if (native_arch != lxc_seccomp_arch_ppc &&
 				    native_arch != lxc_seccomp_arch_ppc64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
@@ -877,24 +894,24 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_MIPS
-			else if (strcmp(line, "[mips64]") == 0 ||
-				 strcmp(line, "[MIPS64]") == 0) {
+			else if (strequal(line, "[mips64]") ||
+				 strequal(line, "[MIPS64]")) {
 				if (native_arch != lxc_seccomp_arch_mips64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_mips64;
-			} else if (strcmp(line, "[mips64n32]") == 0 ||
-				   strcmp(line, "[MIPS64N32]") == 0) {
+			} else if (strequal(line, "[mips64n32]") ||
+				   strequal(line, "[MIPS64N32]")) {
 				if (native_arch != lxc_seccomp_arch_mips64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_mips64n32;
-			} else if (strcmp(line, "[mips]") == 0 ||
-				   strcmp(line, "[MIPS]") == 0) {
+			} else if (strequal(line, "[mips]") ||
+				   strequal(line, "[MIPS]")) {
 				if (native_arch != lxc_seccomp_arch_mips &&
 				    native_arch != lxc_seccomp_arch_mips64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
@@ -902,24 +919,24 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_mips;
-			} else if (strcmp(line, "[mipsel64]") == 0 ||
-				   strcmp(line, "[MIPSEL64]") == 0) {
+			} else if (strequal(line, "[mipsel64]") ||
+				   strequal(line, "[MIPSEL64]")) {
 				if (native_arch != lxc_seccomp_arch_mipsel64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_mipsel64;
-			} else if (strcmp(line, "[mipsel64n32]") == 0 ||
-				   strcmp(line, "[MIPSEL64N32]") == 0) {
+			} else if (strequal(line, "[mipsel64n32]") ||
+				   strequal(line, "[MIPSEL64N32]")) {
 				if (native_arch != lxc_seccomp_arch_mipsel64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
 				}
 
 				cur_rule_arch = lxc_seccomp_arch_mipsel64n32;
-			} else if (strcmp(line, "[mipsel]") == 0 ||
-				   strcmp(line, "[MIPSEL]") == 0) {
+			} else if (strequal(line, "[mipsel]") ||
+				   strequal(line, "[MIPSEL]")) {
 				if (native_arch != lxc_seccomp_arch_mipsel &&
 				    native_arch != lxc_seccomp_arch_mipsel64) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
@@ -930,8 +947,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_S390X
-			else if (strcmp(line, "[s390x]") == 0 ||
-				 strcmp(line, "[S390X]") == 0) {
+			else if (strequal(line, "[s390x]") ||
+				 strequal(line, "[S390X]")) {
 				if (native_arch != lxc_seccomp_arch_s390x) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
@@ -941,8 +958,8 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 			}
 #endif
 #ifdef SCMP_ARCH_S390
-			else if (strcmp(line, "[s390]") == 0 ||
-				strcmp(line, "[S390]") == 0) {
+			else if (strequal(line, "[s390]") ||
+				 strequal(line, "[S390]")) {
 				if (native_arch != lxc_seccomp_arch_s390) {
 					cur_rule_arch = lxc_seccomp_arch_unknown;
 					continue;
@@ -978,43 +995,23 @@ static int parse_config_v2(FILE *f, char *line, size_t *line_bufsz, struct lxc_c
 		}
 #endif
 
-		if (!do_resolve_add_rule(SCMP_ARCH_NATIVE, line,
-					 conf->seccomp.seccomp_ctx, &rule))
+
+		ret = do_resolve_add_rule(SCMP_ARCH_NATIVE, line,
+					 conf->seccomp.seccomp_ctx, &rule);
+		if (ret == lxc_seccomp_rule_err)
 			goto bad_rule;
+		if (ret == lxc_seccomp_rule_undefined_syscall)
+			continue;
 
-		INFO("Added native rule for arch %d for %s action %d(%s)",
-		     SCMP_ARCH_NATIVE, line, rule.action,
-		     get_action_name(rule.action));
-
-		if (ctx.architectures[0] != SCMP_ARCH_NATIVE) {
-			if (!do_resolve_add_rule(ctx.architectures[0], line,
-						 ctx.contexts[0], &rule))
-				goto bad_rule;
-
-			INFO("Added compat rule for arch %d for %s action %d(%s)",
-			     ctx.architectures[0], line, rule.action,
-			     get_action_name(rule.action));
+		for (int i = 0; i < 3; i++ ) {
+			uint32_t arch = ctx.architectures[i];
+			if (arch != SCMP_ARCH_NATIVE && arch != seccomp_arch_native()) {
+				if (lxc_seccomp_rule_err == do_resolve_add_rule(arch, line,
+							ctx.contexts[i], &rule))
+					goto bad_rule;
+			}
 		}
 
-		if (ctx.architectures[1] != SCMP_ARCH_NATIVE) {
-			if (!do_resolve_add_rule(ctx.architectures[1], line,
-						 ctx.contexts[1], &rule))
-				goto bad_rule;
-
-			INFO("Added compat rule for arch %d for %s action %d(%s)",
-			     ctx.architectures[1], line, rule.action,
-			     get_action_name(rule.action));
-		}
-
-		if (ctx.architectures[2] != SCMP_ARCH_NATIVE) {
-			if (!do_resolve_add_rule(ctx.architectures[2], line,
-						ctx.contexts[2], &rule))
-				goto bad_rule;
-
-			INFO("Added native rule for arch %d for %s action %d(%s)",
-			     ctx.architectures[2], line, rule.action,
-			     get_action_name(rule.action));
-		}
 	}
 
 	INFO("Merging compat seccomp contexts into main context");
@@ -1162,7 +1159,7 @@ static bool use_seccomp(const struct lxc_conf *conf)
 		return true;
 
 	while (getline(&line, &line_bufsz, f) != -1) {
-		if (strncmp(line, "Seccomp:", 8) == 0) {
+		if (strnequal(line, "Seccomp:", 8)) {
 			found = true;
 
 			ret = sscanf(line + 8, "%d", &v);
@@ -1263,14 +1260,16 @@ int lxc_seccomp_load(struct lxc_conf *conf)
 /* After load seccomp filter into the kernel successfully, export the current seccomp
  * filter to log file */
 #if HAVE_SCMP_FILTER_CTX
-	if ((lxc_log_get_level() <= LXC_LOG_LEVEL_TRACE ||
-	     conf->loglevel <= LXC_LOG_LEVEL_TRACE) &&
-	    lxc_log_fd >= 0) {
-		ret = seccomp_export_pfc(conf->seccomp.seccomp_ctx, lxc_log_fd);
-		/* Just give an warning when export error */
-		if (ret < 0) {
-			errno = -ret;
-			SYSWARN("Failed to export seccomp filter to log file");
+	if (lxc_log_trace()) {
+		int fd_log;
+
+		fd_log = lxc_log_get_fd();
+		if (fd_log >= 0) {
+			ret = seccomp_export_pfc(conf->seccomp.seccomp_ctx, fd_log);
+			if (ret < 0) {
+				errno = -ret;
+				SYSWARN("Failed to export seccomp filter to log file");
+			}
 		}
 	}
 #endif
@@ -1282,6 +1281,9 @@ int lxc_seccomp_load(struct lxc_conf *conf)
 			errno = -ret;
 			return -1;
 		}
+
+		if (fd_make_nonblocking(ret))
+			return log_error_errno(-1, errno, "Failed to make seccomp listener fd non-blocking");;
 
 		conf->seccomp.notifier.notify_fd = ret;
 		TRACE("Retrieved new seccomp listener fd %d", ret);
@@ -1308,6 +1310,7 @@ void lxc_seccomp_free(struct lxc_seccomp *seccomp)
 	seccomp_notify_free(seccomp->notifier.req_buf, seccomp->notifier.rsp_buf);
 	seccomp->notifier.req_buf = NULL;
 	seccomp->notifier.rsp_buf = NULL;
+	free_disarm(seccomp->notifier.cookie);
 #endif
 }
 
@@ -1342,9 +1345,16 @@ static void seccomp_notify_default_answer(int fd, struct seccomp_notif *req,
 {
 	resp->id = req->id;
 	resp->error = -ENOSYS;
+	resp->val = 0;
+	resp->flags = 0;
 
 	if (seccomp_notify_respond(fd, resp))
-		SYSERROR("Failed to send default message to seccomp");
+		SYSERROR("Failed to send default message to seccomp notification with id(%llu)",
+			 (long long unsigned int)resp->id);
+	else
+		TRACE("Sent default response for seccomp notification with id(%llu)",
+		      (long long unsigned int)resp->id);
+	memset(resp, 0, handler->conf->seccomp.notifier.sizes.seccomp_notif_resp);
 }
 #endif
 
@@ -1372,7 +1382,7 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 	int listener_proxy_fd = conf->seccomp.notifier.proxy_fd;
 	struct seccomp_notify_proxy_msg msg = {0};
 	char *cookie = conf->seccomp.notifier.cookie;
-	uint64_t req_id;
+	__u64 req_id;
 
 	if (events & EPOLLHUP) {
 		lxc_mainloop_del_handler(descr, fd);
@@ -1380,10 +1390,13 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 		return log_trace(0, "Removing seccomp notifier fd %d", fd);
 	}
 
-	memset(req, 0, sizeof(*req));
+	memset(req, 0, conf->seccomp.notifier.sizes.seccomp_notif);
 	ret = seccomp_notify_receive(fd, req);
 	if (ret) {
-		SYSERROR("Failed to read seccomp notification");
+		if (errno == ENOENT)
+			TRACE("Intercepted system call aborted");
+		else
+			SYSERROR("Failed to read seccomp notification");
 		goto out;
 	}
 
@@ -1404,8 +1417,15 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 
 	/* remember the ID in case we receive garbage from the proxy */
 	resp->id = req_id = req->id;
+	TRACE("Received seccomp notification with id(%llu)", (long long unsigned int)req_id);
 
-	snprintf(mem_path, sizeof(mem_path), "/proc/%d", req->pid);
+	ret = strnprintf(mem_path, sizeof(mem_path), "/proc/%d", req->pid);
+	if (ret < 0) {
+		seccomp_notify_default_answer(fd, req, resp, hdlr);
+		SYSERROR("Failed to create path to process's proc directory");
+		goto out;
+	}
+
 	fd_pid = open(mem_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (fd_pid < 0) {
 		seccomp_notify_default_answer(fd, req, resp, hdlr);
@@ -1413,7 +1433,13 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 		goto out;
 	}
 
-	snprintf(mem_path, sizeof(mem_path), "/proc/%d/mem", req->pid);
+	ret = strnprintf(mem_path, sizeof(mem_path), "/proc/%d/mem", req->pid);
+	if (ret < 0) {
+		seccomp_notify_default_answer(fd, req, resp, hdlr);
+		SYSERROR("Failed to create path to process's virtual memory");
+		goto out;
+	}
+
 	fd_mem = open(mem_path, O_RDWR | O_CLOEXEC);
 	if (fd_mem < 0) {
 		seccomp_notify_default_answer(fd, req, resp, hdlr);
@@ -1428,7 +1454,7 @@ int seccomp_notify_handler(int fd, uint32_t events, void *data,
 	ret = seccomp_notify_id_valid(fd, req->id);
 	if (ret < 0) {
 		seccomp_notify_default_answer(fd, req, resp, hdlr);
-		SYSERROR("Invalid seccomp notify request id");
+		SYSERROR("Invalid seccomp notify request id(%llu)", (long long unsigned int)req->id);
 		goto out;
 	}
 
@@ -1487,8 +1513,9 @@ retry:
 	}
 
 	if (resp->id != req_id) {
+		ERROR("Proxy returned response with invalid id(%llu) != id(%llu)",
+		      (long long unsigned int)resp->id, (long long unsigned int)req_id);
 		resp->id = req_id;
-		ERROR("Proxy returned response with illegal id");
 		seccomp_notify_default_answer(fd, req, resp, hdlr);
 		goto out;
 	}
@@ -1500,9 +1527,19 @@ retry:
 		goto out;
 	}
 
+	if (resp->id != req_id) {
+		ERROR("Proxy returned response with invalid id(%llu) != id(%llu)",
+		      (long long unsigned int)resp->id, (long long unsigned int)req_id);
+		resp->id = req_id;
+	}
+
 	ret = seccomp_notify_respond(fd, resp);
 	if (ret)
 		SYSERROR("Failed to send seccomp notification");
+	else
+		TRACE("Sent response for seccomp notification with id(%llu)",
+		      (long long unsigned int)resp->id);
+	memset(resp, 0, conf->seccomp.notifier.sizes.seccomp_notif_resp);
 
 out:
 #endif
@@ -1524,6 +1561,7 @@ void seccomp_conf_init(struct lxc_conf *conf)
 	       sizeof(conf->seccomp.notifier.proxy_addr));
 	conf->seccomp.notifier.req_buf = NULL;
 	conf->seccomp.notifier.rsp_buf = NULL;
+	conf->seccomp.notifier.cookie = NULL;
 #endif
 }
 
@@ -1601,9 +1639,9 @@ int lxc_seccomp_recv_notifier_fd(struct lxc_seccomp *seccomp, int socket_fd)
 	if (seccomp->notifier.wants_supervision) {
 		int ret;
 
-		ret = lxc_abstract_unix_recv_fds(socket_fd,
-						 &seccomp->notifier.notify_fd,
-						 1, NULL, 0);
+		ret = lxc_abstract_unix_recv_one_fd(socket_fd,
+						    &seccomp->notifier.notify_fd,
+						    NULL, 0);
 		if (ret < 0)
 			return -1;
 	}
@@ -1614,7 +1652,6 @@ int lxc_seccomp_recv_notifier_fd(struct lxc_seccomp *seccomp, int socket_fd)
 int lxc_seccomp_add_notifier(const char *name, const char *lxcpath,
 			     struct lxc_seccomp *seccomp)
 {
-
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
 	if (seccomp->notifier.wants_supervision) {
 		int ret;

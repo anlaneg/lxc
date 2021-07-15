@@ -137,6 +137,7 @@ union netdev_p {
  * @created_name      : the name with which this interface got created before
  *			being renamed to final_name.
  *			Currenly only used for veth devices.
+ * @transient_name    : temporary name to avoid namespace collisions
  * @hwaddr            : mac address
  * @mtu               : maximum transmission unit
  * @priv              : information specific to the specificed network type
@@ -170,6 +171,7 @@ struct lxc_netdev {
 	//网络设备名称，通过lxc.net.name设置
 	char name[IFNAMSIZ];
 	char created_name[IFNAMSIZ];//生成的本端接口名称
+	char transient_name[IFNAMSIZ];
 	char *hwaddr;//硬件地址
 	char *mtu;//用户指定的mtu值
 	union netdev_p priv;//私有数据

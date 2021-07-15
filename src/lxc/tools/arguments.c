@@ -132,7 +132,7 @@ __noreturn static void print_usage_exit(const struct option longopts[],
 }
 
 //显示版本号并退出
-__noreturn static void print_version_exit()
+__noreturn static void print_version_exit(void)
 {
 	printf("%s\n", lxc_get_version());
 	exit(EXIT_SUCCESS);

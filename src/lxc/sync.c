@@ -18,134 +18,153 @@
 lxc_log_define(sync, lxc);
 
 //自fd中读取sync,检查sequence是否与sync一致
-static int __sync_wait(int fd, int sequence)
+bool sync_wait(int fd, int sequence)
 {
 	int sync = -1;
 	ssize_t ret;
 
 	//尝试读取fd,如果读取失败，则返回-1
 	ret = lxc_read_nointr(fd, &sync, sizeof(sync));
-	if (ret < 0) {
-		SYSERROR("Sync wait failure");
-		return -1;
-	}
+	if (ret < 0)
+		return log_error_errno(false, errno, "Sync wait failure");
 
 	//文件达到结尾
 	if (!ret)
-		return 0;
+		return true;
 
 	//其它告警情况（可能写了多次，但一次读取）
-	if ((size_t)ret != sizeof(sync)) {
-		ERROR("Unexpected sync size: %zu expected %zu", (size_t)ret, sizeof(sync));
-		return -1;
-	}
+	if ((size_t)ret != sizeof(sync))
+		return log_error(false, "Unexpected sync size: %zu expected %zu", (size_t)ret, sizeof(sync));
 
-	if (sync == LXC_SYNC_ERROR) {
-		ERROR("An error occurred in another process "
-		      "(expected sequence number %d)", sequence);
-		return -1;
-	}
+	if (sync == SYNC_ERROR)
+		return log_error(false, "An error occurred in another process (expected sequence number %d)", sequence);
 
 	//sync与sequence不相同时返回-1
-	if (sync != sequence) {
-		ERROR("Invalid sequence number %d. Expected sequence number %d",
-		      sync, sequence);
-		return -1;
-	}
-	return 0;
+	if (sync != sequence)
+		return log_error(false, "Invalid sequence number %d. Expected sequence number %d", sync, sequence);
+
+	return true;
 }
 
-//如果写入sequence失败，则返回-1,否则返回0
-static int __sync_wake(int fd, int sequence)
+bool sync_wake(int fd, int sequence)
 {
 	int sync = sequence;
 
-	if (lxc_write_nointr(fd, &sync, sizeof(sync)) < 0) {
-		SYSERROR("Sync wake failure");
-		return -1;
-	}
-	return 0;
+	if (lxc_write_nointr(fd, &sync, sizeof(sync)) < 0)
+		return log_error_errno(false, errno, "Sync wake failure");
+
+	return true;
 }
 
 //向fd中写入sequence,然后阻塞自fd中读取数据，检查读取的值是否为sequence+1
 //如果读取sequeuce+1或者达到文件结尾，则返回0,否则返回-1
-static int __sync_barrier(int fd, int sequence)
+static bool __sync_barrier(int fd, int sequence)
 {
-    //如果wake失败，则返回-1
-	if (__sync_wake(fd, sequence))
-		return -1;
-	return __sync_wait(fd, sequence+1);
+	if (!sync_wake(fd, sequence))
+		return false;
+
+	return sync_wait(fd, sequence + 1);
 }
 
 //通知父进程开始sequence阶段，等待父进程达到sequence阶段后开始下一步操作
-int lxc_sync_barrier_parent(struct lxc_handler *handler, int sequence)
+static inline const char *start_sync_to_string(int state)
 {
+	switch (state) {
+	case START_SYNC_STARTUP:
+		return "startup";
+	case START_SYNC_CONFIGURE:
+		return "configure";
+	case START_SYNC_POST_CONFIGURE:
+		return "post-configure";
+	case START_SYNC_CGROUP_LIMITS:
+		return "cgroup-limits";
+	case START_SYNC_IDMAPPED_MOUNTS:
+		return "idmapped-mounts";
+	case START_SYNC_FDS:
+		return "fds";
+	case START_SYNC_READY_START:
+		return "ready-start";
+	case START_SYNC_RESTART:
+		return "restart";
+	case START_SYNC_POST_RESTART:
+		return "post-restart";
+	case SYNC_ERROR:
+		return "error";
+	default:
+		return "invalid sync state";
+	}
+}
+
+bool lxc_sync_barrier_parent(struct lxc_handler *handler, int sequence)
+{
+	TRACE("Child waking parent with sequence %s and waiting for sequence %s",
+	      start_sync_to_string(sequence), start_sync_to_string(sequence + 1));
 	return __sync_barrier(handler->sync_sock[0], sequence);
 }
 
 //通知子进程开始执行sequence阶段，等待子进程达到sequence阶段后开始下一步(sequence+1)操作
-int lxc_sync_barrier_child(struct lxc_handler *handler, int sequence)
+bool lxc_sync_barrier_child(struct lxc_handler *handler, int sequence)
 {
+	TRACE("Parent waking child with sequence %s and waiting with sequence %s",
+	      start_sync_to_string(sequence), start_sync_to_string(sequence + 1));
 	return __sync_barrier(handler->sync_sock[1], sequence);
 }
 
 //通知父进程执行sequence阶段
-int lxc_sync_wake_parent(struct lxc_handler *handler, int sequence)
+bool lxc_sync_wake_parent(struct lxc_handler *handler, int sequence)
 {
-	return __sync_wake(handler->sync_sock[0], sequence);
+	TRACE("Child waking parent with sequence %s", start_sync_to_string(sequence));
+	return sync_wake(handler->sync_sock[0], sequence);
 }
 
 //等待父进程通知执行sequence阶段
-int lxc_sync_wait_parent(struct lxc_handler *handler, int sequence)
+bool lxc_sync_wait_parent(struct lxc_handler *handler, int sequence)
 {
-	return __sync_wait(handler->sync_sock[0], sequence);
+	TRACE("Child waiting for parent with sequence %s", start_sync_to_string(sequence));
+	return sync_wait(handler->sync_sock[0], sequence);
 }
 
-
-int lxc_sync_wait_child(struct lxc_handler *handler, int sequence)
+bool lxc_sync_wait_child(struct lxc_handler *handler, int sequence)
 {
-	return __sync_wait(handler->sync_sock[1], sequence);
+	TRACE("Parent waiting for child with sequence %s", start_sync_to_string(sequence));
+	return sync_wait(handler->sync_sock[1], sequence);
 }
 
-int lxc_sync_wake_child(struct lxc_handler *handler, int sequence)
+bool lxc_sync_wake_child(struct lxc_handler *handler, int sequence)
 {
-	return __sync_wake(handler->sync_sock[1], sequence);
+	TRACE("Child waking parent with sequence %s", start_sync_to_string(sequence));
+	return sync_wake(handler->sync_sock[1], sequence);
 }
 
 //初始化一组同步socket
-int lxc_sync_init(struct lxc_handler *handler)
+bool lxc_sync_init(struct lxc_handler *handler)
 {
 	int ret;
 
 	//创建父子进程同步socket
 	ret = socketpair(AF_LOCAL, SOCK_STREAM, 0, handler->sync_sock);
-	if (ret) {
-		SYSERROR("failed to create synchronization socketpair");
-		return -1;
-	}
+	if (ret)
+		return log_error_errno(false, errno, "failed to create synchronization socketpair");
 
 	/* Be sure we don't inherit this after the exec */
-	fcntl(handler->sync_sock[0], F_SETFD, FD_CLOEXEC);
+	ret = fcntl(handler->sync_sock[0], F_SETFD, FD_CLOEXEC);
+	if (ret < 0)
+		return log_error_errno(false, errno, "Failed to make socket close-on-exec");
 
-	return 0;
+	TRACE("Initialized synchronization infrastructure");
+	return true;
 }
 
 //父进程不使用sync_sock[0],故关闭sync_sock[0]
 void lxc_sync_fini_child(struct lxc_handler *handler)
 {
-	if (handler->sync_sock[0] != -1) {
-		close(handler->sync_sock[0]);
-		handler->sync_sock[0] = -1;
-	}
+	close_prot_errno_disarm(handler->sync_sock[0]);
 }
 
 //子进程不使用sync_socket[1]，故关闭sync_sock[1]
 void lxc_sync_fini_parent(struct lxc_handler *handler)
 {
-	if (handler->sync_sock[1] != -1) {
-		close(handler->sync_sock[1]);
-		handler->sync_sock[1] = -1;
-	}
+	close_prot_errno_disarm(handler->sync_sock[1]);
 }
 
 void lxc_sync_fini(struct lxc_handler *handler)
